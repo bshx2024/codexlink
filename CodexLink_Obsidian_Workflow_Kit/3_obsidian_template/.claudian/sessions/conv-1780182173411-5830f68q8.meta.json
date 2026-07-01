@@ -1,0 +1,11 @@
+{
+  "id": "conv-1780182173411-5830f68q8",
+  "providerId": "codex",
+  "title": "你好",
+  "titleGenerationStatus": "failed",
+  "createdAt": 1780182173411,
+  "updatedAt": 1780183948569,
+  "lastResponseAt": 1780183940988,
+  "sessionId": null,
+  "currentNote": "tools/Horizon/data/summaries/horizon-2026-05-30-zh.md"
+}

@@ -1,0 +1,21 @@
+{
+  "id": "conv-1780062639336-y61jos3tc",
+  "providerId": "codex",
+  "title": "你好",
+  "titleGenerationStatus": "failed",
+  "createdAt": 1780062639339,
+  "updatedAt": 1780147671661,
+  "lastResponseAt": 1780147671661,
+  "sessionId": null,
+  "currentNote": "欢迎.md",
+  "usage": {
+    "inputTokens": 88228,
+    "cacheCreationInputTokens": 0,
+    "cacheReadInputTokens": 0,
+    "contextWindow": 258400,
+    "contextWindowIsAuthoritative": true,
+    "contextTokens": 88228,
+    "percentage": 34,
+    "model": "gpt-5.5"
+  }
+}

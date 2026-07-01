@@ -1,0 +1,40 @@
+﻿{
+  "product_type": "Wireless Bluetooth Headphones",
+  "brand": "TechSound",
+  "model": "TS-Pro 500",
+  "core_features": [
+    "Active Noise Cancelling (ANC)",
+    "40mm Custom Drivers",
+    "40-Hour Battery Life",
+    "Bluetooth 5.2",
+    "Memory Foam Ear Cushions",
+    "Foldable Design",
+    "Built-in Microphone for Calls",
+    "Wired and Wireless Modes"
+  ],
+  "target_audience": [
+    "Remote Workers",
+    "Commuters",
+    "Students",
+    "Music Enthusiasts",
+    "Gamers"
+  ],
+  "price_range": "$49.99-$59.99",
+  "unique_selling_points": [
+    "Hybrid Active Noise Cancelling technology",
+    "Industry-leading 40-hour battery life",
+    "Hi-Res Audio certification",
+    "Fast charging: 10 minutes = 5 hours playback",
+    "Foldable design with premium carrying case",
+    "Multi-point connection: connect to 2 devices simultaneously"
+  ],
+  "technical_specs": {
+    "driver_size": "40mm",
+    "frequency_response": "20Hz-20kHz",
+    "impedance": "32Ω",
+    "battery_life": "40 hours (ANC on), 60 hours (ANC off)",
+    "charging_time": "2 hours",
+    "bluetooth_version": "5.2",
+    "weight": "250g"
+  }
+}

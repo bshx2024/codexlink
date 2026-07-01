@@ -1,0 +1,95 @@
+{
+  "userName": "",
+  "permissionMode": "yolo",
+  "model": "sensenova/deepseek-v4-flash",
+  "thinkingBudget": "off",
+  "effortLevel": "high",
+  "serviceTier": "default",
+  "enableAutoTitleGeneration": true,
+  "titleGenerationModel": "",
+  "excludedTags": [],
+  "mediaFolder": "",
+  "systemPrompt": "",
+  "persistentExternalContextPaths": [],
+  "sharedEnvironmentVariables": "",
+  "envSnippets": [],
+  "customContextLimits": {},
+  "keyboardNavigation": {
+    "scrollUpKey": "w",
+    "scrollDownKey": "s",
+    "focusInputKey": "i"
+  },
+  "requireCommandOrControlEnterToSend": false,
+  "locale": "en",
+  "providerConfigs": {
+    "claude": {
+      "safeMode": "acceptEdits",
+      "cliPath": "",
+      "cliPathsByHost": {},
+      "loadUserSettings": true,
+      "enableChrome": false,
+      "enableBangBash": false,
+      "enableOpus1M": false,
+      "enableSonnet1M": false,
+      "customModels": "sensenova/deepseek-v4-flash",
+      "lastModel": "sensenova/deepseek-v4-flash",
+      "environmentVariables": "ANTHROPIC_BASE_URL=http://127.0.0.1:28642/v1\nANTHROPIC_API_KEY=sk-A94nj7dTqMNIXgdFz2LhmbtEoNAKhcnQmIkChS5ff8l142Le",
+      "environmentHash": "ANTHROPIC_BASE_URL=http://127.0.0.1:28642/v1"
+    },
+    "codex": {
+      "enabled": true,
+      "safeMode": "workspace-write",
+      "cliPath": "",
+      "cliPathsByHost": {
+        "device:7e4c836d-f9ef-4977-a6ce-8ce4c30b6cf7": "C:\\Users\\Administrator\\AppData\\Local\\OpenAI\\Codex\\bin\\958d608b5e0546a5\\codex.exe"
+      },
+      "customModels": "gemini-3.5-flash\nsensenova/deepseek-v4-flash",
+      "reasoningSummary": "detailed",
+      "environmentVariables": "OPENAI_BASE_URL=http://127.0.0.1:28642/v1\nAPI_BASE_URL=http://127.0.0.1:28642/v1",
+      "environmentHash": "OPENAI_BASE_URL=http://127.0.0.1:28642/v1",
+      "installationMethodsByHost": {
+        "device:7e4c836d-f9ef-4977-a6ce-8ce4c30b6cf7": "native-windows"
+      },
+      "wslDistroOverridesByHost": {}
+    },
+    "opencode": {
+      "cliPath": "",
+      "cliPathsByHost": {},
+      "enabled": false,
+      "environmentHash": "",
+      "environmentVariables": "OPENCODE_ENABLE_EXA=1",
+      "modelAliases": {},
+      "preferredThinkingByModel": {},
+      "selectedMode": "",
+      "thinkingOptionsByModel": {},
+      "visibleModels": []
+    }
+  },
+  "settingsProvider": "claude",
+  "savedProviderModel": {
+    "claude": "sensenova/deepseek-v4-flash",
+    "codex": "sensenova/deepseek-v4-flash"
+  },
+  "savedProviderEffort": {
+    "claude": "high",
+    "codex": "medium"
+  },
+  "savedProviderServiceTier": {
+    "codex": "default"
+  },
+  "savedProviderThinkingBudget": {
+    "claude": "off",
+    "codex": "off"
+  },
+  "savedProviderPermissionMode": {
+    "claude": "yolo",
+    "codex": "yolo"
+  },
+  "lastCustomModel": "sensenova/deepseek-v4-flash",
+  "maxTabs": 3,
+  "tabBarPosition": "input",
+  "enableAutoScroll": true,
+  "deferMathRenderingDuringStreaming": true,
+  "chatViewPlacement": "right-sidebar",
+  "hiddenProviderCommands": {}
+}

@@ -1,0 +1,15 @@
+﻿# Node dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Compiled binaries and distribution packages
+codexlink-server.exe
+*.zip
+dist/
+
+# OS/System files
+.DS_Store
+Thumbs.db
+Desktop.ini

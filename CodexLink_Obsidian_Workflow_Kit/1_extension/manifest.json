@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "CodexLink",
+  "version": "1.0.0",
+  "description": "浏览器与 Codex 联动插件，完美读取登录与防爬网页内容",
+  "permissions": [
+    "activeTab",
+    "tabs",
+    "scripting",
+    "sidePanel"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "打开 CodexLink 侧边栏"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

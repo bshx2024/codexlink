@@ -1,0 +1,157 @@
+{
+  "version": "1.0",
+  "ai": {
+    "provider": "openai",
+    "model": "mimo-v2-pro",
+    "api_key_env": "MIMO_API_KEY",
+    "temperature": 0.3,
+    "max_tokens": 8192,
+    "throttle_sec": 0.5,
+    "analysis_concurrency": 1,
+    "enrichment_concurrency": 1,
+    "languages": [
+      "zh",
+      "en"
+    ],
+    "base_url": "https://api.xiaomimimo.com/v1"
+  },
+  "email": {
+    "enabled": false,
+    "smtp_server": "smtp.qq.com",
+    "smtp_port": 465,
+    "imap_enabled": true,
+    "imap_server": "imap.qq.com",
+    "imap_port": 993,
+    "email_address": "your_email@qq.com",
+    "password_env": "EMAIL_PASSWORD",
+    "sender_name": "Horizon Daily",
+    "subscribe_keyword": "SUBSCRIBE",
+    "unsubscribe_keyword": "UNSUBSCRIBE"
+  },
+  "sources": {
+    "github": [
+      {
+        "type": "repo_releases",
+        "owner": "langchain-ai",
+        "repo": "langchain",
+        "enabled": true
+      },
+      {
+        "type": "repo_releases",
+        "owner": "run-llama",
+        "repo": "llama_index",
+        "enabled": true
+      },
+      {
+        "type": "repo_releases",
+        "owner": "modelcontextprotocol",
+        "repo": "python-sdk",
+        "enabled": true
+      }
+    ],
+    "hackernews": {
+      "enabled": true,
+      "fetch_top_stories": 10,
+      "min_score": 150
+    },
+    "rss": [
+      {
+        "name": "OpenAI Blog",
+        "url": "https://openai.com/news/rss.xml",
+        "enabled": true,
+        "category": "ai-official"
+      },
+      {
+        "name": "Anthropic News",
+        "url": "https://www.anthropic.com/news/rss.xml",
+        "enabled": true,
+        "category": "ai-official"
+      },
+      {
+        "name": "Hugging Face Blog",
+        "url": "https://huggingface.co/blog/feed.xml",
+        "enabled": true,
+        "category": "ai-dev"
+      },
+      {
+        "name": "Simon Willison",
+        "url": "https://simonwillison.net/atom/everything/",
+        "enabled": true,
+        "category": "ai-tools"
+      }
+    ],
+    "reddit": {
+      "enabled": false,
+      "subreddits": [],
+      "users": [],
+      "fetch_comments": 5
+    },
+    "telegram": {
+      "enabled": false,
+      "channels": []
+    },
+    "twitter": {
+      "enabled": false,
+      "apify_token_env": "APIFY_TOKEN",
+      "users": [
+        "OpenAI",
+        "AnthropicAI",
+        "GoogleDeepMind",
+        "karpathy",
+        "sama",
+        "AndrewYNg",
+        "huggingface",
+        "LangChainAI",
+        "swyx"
+      ],
+      "fetch_limit": 20,
+      "fetch_reply_text": false,
+      "max_replies_per_tweet": 3,
+      "max_tweets_to_expand": 10,
+      "reply_min_likes": 10
+    },
+    "openbb": {
+      "enabled": false,
+      "fetch_filings": false,
+      "filings_provider": "sec",
+      "watchlists": []
+    },
+    "ossinsight": {
+      "enabled": true,
+      "period": "past_24_hours",
+      "languages": [
+        "All",
+        "Python"
+      ],
+      "keywords": [
+        "ai",
+        "llm",
+        "agent",
+        "rag",
+        "mcp"
+      ],
+      "min_stars": 30,
+      "max_items": 10
+    }
+  },
+  "filtering": {
+    "ai_score_threshold": 7.0,
+    "time_window_hours": 24
+  },
+  "webhook": {
+    "enabled": false,
+    "url_env": "HORIZON_WEBHOOK_URL",
+    "delivery": "summary",
+    "overview_position": "first",
+    "platform": "generic",
+    "layout": "markdown",
+    "fallback_layout": "markdown",
+    "languages": [
+      "zh"
+    ],
+    "request_body": {
+      "text": "Horizon AI?? #{date}\n\n#{summary}"
+    },
+    "headers": ""
+  }
+}

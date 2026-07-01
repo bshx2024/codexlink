@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>CodexLink Sidepanel</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Outfit:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="logo-area">
+        <span class="logo-icon">🔗</span>
+        <span class="logo-text">Codex<span class="highlight">Link</span></span>
+      </div>
+      <div id="connection-badge" class="badge badge-disconnected">
+        <span class="dot"></span>
+        <span class="badge-text">未连接</span>
+      </div>
+    </header>
+
+    <!-- Content Area -->
+    <main class="app-main">
+      <!-- Status Card -->
+      <section class="card status-card">
+        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+          <h3>运行模式 & 状态</h3>
+          <select id="sel-op-mode" style="background: hsla(220, 30%, 5%, 0.6); border: 1px solid hsla(217, 32%, 18%, 0.8); border-radius: 4px; padding: 4px 6px; font-size: 0.76rem; color: var(--text-main); outline: none; cursor: pointer;">
+            <option value="ws_bridge" selected>🔗 中转桥接模式</option>
+            <option value="standalone">💾 浏览器直写模式</option>
+          </select>
+        </div>
+        <div class="card-content">
+          <!-- Bridge Mode UI -->
+          <div id="bridge-mode-ui">
+            <p id="status-desc">本地服务正在连接到 <code>ws://127.0.0.1:3010</code>...</p>
+            <div class="progress-bar-container">
+              <div id="status-progress" class="progress-bar progress-bar-disconnected"></div>
+            </div>
+            <!-- 开机自启静默运行配置指引 -->
+            <div id="startup-guide-trigger" class="startup-guide-trigger hidden">
+              <span>💡 想要开机自动秒连？点击查看</span>
+            </div>
+            <div id="startup-guide-content" class="startup-guide-content hidden">
+              <p>由于浏览器安全限制，插件无法直接帮您启动本地服务。但您可一键配置开机后台静默自启：</p>
+              <ol>
+                <li>在工作区下，右键点击 <code>install-startup.ps1</code> 脚本</li>
+                <li>选择 <strong>“使用 PowerShell 运行”</strong></li>
+                <li>按提示完成一次性配置。未来开机时，服务将完全静默在后台运行，永不弹框，打开插件即连！</li>
+              </ol>
+            </div>
+          </div>
+          
+          <!-- Standalone Mode UI -->
+          <div id="standalone-mode-ui" class="hidden" style="margin-top: 4px;">
+            <p style="font-size: 0.78rem; color: var(--text-muted); margin-bottom: 8px;">在此模式下，插件将利用现代浏览器 File System API 直接写入本地 Obsidian 库，免除运行命令行 Node 服务的烦恼。</p>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <button id="btn-choose-dir" class="btn btn-secondary btn-sm" style="flex-shrink: 0; padding: 6px 10px; font-size: 0.76rem; border-radius: 4px; border: 1px solid hsla(217, 32%, 18%, 0.8);">📁 选择 Obsidian 库目录</button>
+              <span id="dir-status-text" style="font-size: 0.76rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">未选择目录</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Active Tab Panel -->
+      <section class="card tab-card">
+        <div class="card-header">
+          <h3>当前活跃标签页</h3>
+          <button id="btn-refresh" class="btn btn-secondary" title="刷新页面预览">
+            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+          </button>
+        </div>
+        <div class="card-content">
+          <div class="tab-info">
+            <div class="tab-title-row">
+              <span class="tab-icon">📄</span>
+              <span id="tab-title" class="tab-title">加载中...</span>
+            </div>
+            <div class="tab-url-row">
+              <span id="tab-url" class="tab-url">waiting for tab...</span>
+            </div>
+          </div>
+          
+          <div class="btn-group">
+            <button id="btn-fetch" class="btn btn-primary">
+              <span>提取并预览网页 Markdown</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Markdown Preview -->
+      <section class="card preview-card">
+        <div class="card-header">
+          <h3>AI 视角 (内容预览)</h3>
+          <span id="char-count" class="char-count">0 字</span>
+        </div>
+        <div class="card-content">
+          <div id="markdown-placeholder" class="placeholder-text">
+            点击上方按钮，即可在本地预览将提供给 Codex/PilotDeck 的 Markdown 排版文本。
+          </div>
+          <pre id="markdown-preview" class="markdown-preview-area hidden"></pre>
+          
+          <!-- Obsidian Clipping Actions -->
+          <div id="obsidian-actions" class="obsidian-actions hidden">
+            <div class="options-row" style="display: flex; align-items: center; margin-bottom: 8px; font-size: 0.82rem; gap: 8px; color: var(--text-muted); justify-content: flex-start; padding: 0 4px;">
+              <label class="checkbox-label" style="display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;">
+                <input type="checkbox" id="chk-outliner-mode">
+                <span>以大纲列表模式 (Outliner Mode) 导出</span>
+              </label>
+            </div>
+            <button id="btn-save-obsidian" class="btn btn-obsidian">
+              <span class="btn-icon">💾</span>
+              <span>一键剪存至 Obsidian</span>
+            </button>
+            <button id="btn-ai-save-obsidian" class="btn btn-obsidian-ai">
+              <span class="btn-icon">✨</span>
+              <span>AI 摘要并剪存</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- AI Copilot Chat -->
+      <section class="card chat-card">
+        <div class="card-header">
+          <h3>Codex 网页伴侣 (Codex Web Copilot)</h3>
+          <button id="btn-toggle-settings" class="btn btn-secondary" title="配置 AI 模型接口" style="padding: 6px; display: flex; align-items: center; justify-content: center; border-radius: 6px;">
+            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          </button>
+        </div>
+        <div class="card-content">
+          <!-- AI Settings (Collapsible) -->
+          <div id="ai-settings-drawer" class="ai-settings-drawer hidden">
+            <div class="input-group" style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
+              <input type="checkbox" id="chk-use-custom-ai" style="width: auto; cursor: pointer; height: auto; margin: 0;">
+              <label for="chk-use-custom-ai" style="margin-bottom: 0; cursor: pointer; font-size: 0.76rem; user-select: none;">使用自定义 AI 接口 (不从本地 Codex 同步)</label>
+            </div>
+            <div class="input-group">
+              <label for="ai-chat-mode">联动模式 (Interaction Mode)</label>
+              <select id="ai-chat-mode" style="background: hsla(220, 30%, 5%, 0.6); border: 1px solid hsla(217, 32%, 18%, 0.8); border-radius: 4px; padding: 6px 8px; font-size: 0.78rem; color: var(--text-main); outline: none; cursor: pointer;">
+                <option value="direct" selected>💬 独立 Codex 伴侣 (通过本地 28642 代理对话)</option>
+                <option value="codex_inject">🚀 直连 Codex 窗口 (注入发送到左侧 Codex 页面)</option>
+                <option value="pilotdeck">🚀 直连 PilotDeck 工作舱 (发送到左侧 PilotDeck 页面)</option>
+              </select>
+            </div>
+            <div class="input-group">
+              <label for="ai-api-url">本地 Codex 代理 (Base URL)</label>
+              <input type="text" id="ai-api-url" placeholder="http://localhost:28642/v1">
+            </div>
+            <div class="input-group">
+              <label for="ai-api-key">独立模式密钥 (API Key)</label>
+              <input type="password" id="ai-api-key" placeholder="无需填写（本地代理）">
+            </div>
+            <div class="input-group">
+              <label for="ai-model">独立模式模型 (Model)</label>
+              <input type="text" id="ai-model" placeholder="gpt-5.5 或 sensenova/sensenova-6.7-flash-lite">
+            </div>
+            <button id="btn-save-settings" class="btn btn-secondary btn-sm" style="margin-top: 4px;">保存配置</button>
+          </div>
+
+          <!-- Chat Dialog Area -->
+          <div id="chat-messages" class="chat-messages">
+            <div class="msg msg-system">
+              💬 我是您的 Codex 网页伴侣 (Codex Web Copilot)。您可以在下方直接向我提问，或者勾选“携带当前网页”，我会结合当前页面的 Markdown 文本为您提供翻译、答疑和深度总结！
+            </div>
+          </div>
+
+          <!-- Input Controls -->
+          <div class="chat-controls">
+            <label class="checkbox-label">
+              <input type="checkbox" id="chk-use-context" checked>
+              <span>携带当前网页内容作为 AI 上下文</span>
+            </label>
+            <button id="btn-clear-chat" class="btn-clear" title="清空对话历史">🗑️</button>
+          </div>
+          
+          <div class="chat-input-row">
+            <textarea id="chat-input" placeholder="输入您对网页的问题... (Shift+Enter换行，Enter发送)"></textarea>
+            <button id="btn-send-chat" class="btn btn-primary btn-icon">
+              <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            </button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <span>CodexLink v1.0.0</span>
+      <span class="divider">•</span>
+      <span>已加载上帝视角</span>
+    </footer>
+  </div>
+  <script src="sidepanel.js"></script>
+</body>
+</html>

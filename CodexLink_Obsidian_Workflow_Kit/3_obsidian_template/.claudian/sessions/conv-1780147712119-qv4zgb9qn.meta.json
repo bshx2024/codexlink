@@ -1,0 +1,20 @@
+{
+  "id": "conv-1780147712119-qv4zgb9qn",
+  "providerId": "codex",
+  "title": "你哈",
+  "titleGenerationStatus": "failed",
+  "createdAt": 1780147712119,
+  "updatedAt": 1780182108224,
+  "lastResponseAt": 1780182108224,
+  "sessionId": null,
+  "usage": {
+    "inputTokens": 22520,
+    "cacheCreationInputTokens": 0,
+    "cacheReadInputTokens": 16182,
+    "contextWindow": 258400,
+    "contextWindowIsAuthoritative": true,
+    "contextTokens": 22520,
+    "percentage": 9,
+    "model": "gemini-3.5-flash"
+  }
+}

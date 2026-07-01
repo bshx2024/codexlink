@@ -1,0 +1,142 @@
+﻿{
+  "version": "1.0",
+  "ai": {
+    "provider": "openai",
+    "model": "mimo-v2-pro",
+    "api_key_env": "MIMO_API_KEY",
+    "base_url": "https://api.xiaomimimo.com/v1",
+    "temperature": 0.3,
+    "max_tokens": 8192,
+    "throttle_sec": 1.0,
+    "analysis_concurrency": 2,
+    "enrichment_concurrency": 1,
+    "languages": ["zh", "en"]
+  },
+  "sources": {
+    "hackernews": {
+      "enabled": true,
+      "fetch_top_stories": 30,
+      "min_score": 80
+    },
+    "reddit": {
+      "enabled": true,
+      "subreddits": [
+        { "subreddit": "LocalLLaMA", "enabled": true, "sort": "hot", "time_filter": "day", "fetch_limit": 20, "min_score": 50 },
+        { "subreddit": "MachineLearning", "enabled": true, "sort": "hot", "time_filter": "day", "fetch_limit": 20, "min_score": 30 },
+        { "subreddit": "singularity", "enabled": true, "sort": "hot", "time_filter": "day", "fetch_limit": 15, "min_score": 50 }
+      ],
+      "users": [],
+      "fetch_comments": 5
+    },
+    "telegram": {
+      "enabled": true,
+      "channels": [
+        { "channel": "aigc1024", "enabled": true, "fetch_limit": 20 }
+      ]
+    },
+    "rss": [
+      { "name": "OpenAI Blog", "url": "https://openai.com/news/rss.xml", "enabled": true, "category": "ai-official" },
+      { "name": "Google AI Blog", "url": "https://blog.google/technology/ai/rss/", "enabled": true, "category": "ai-official" },
+      { "name": "Simon Willison", "url": "https://simonwillison.net/atom/everything/", "enabled": true, "category": "ai-tools" },
+      { "name": "Latent Space", "url": "https://feeds.feedburner.com/LatentSpace", "enabled": true, "category": "ai-research" }
+    ],
+    "github": [
+      { "type": "repo_releases", "owner": "openai", "repo": "openai-python", "enabled": true },
+      { "type": "repo_releases", "owner": "anthropics", "repo": "anthropic-sdk-python", "enabled": true },
+      { "type": "repo_releases", "owner": "langchain-ai", "repo": "langchain", "enabled": true }
+    ]
+  },
+  "filtering": {
+    "ai_score_threshold": 6.5,
+    "time_window_hours": 24
+  },
+
+  "competitive_intelligence": {
+    "enabled": true,
+
+    "competitors": [
+      {
+        "name": "Anthropic",
+        "slug": "anthropic",
+        "enabled": true,
+        "tags": ["ai-llm", "api-provider"],
+        "signal_types": ["product_launch", "pricing_change", "funding", "partnership", "technical_release"],
+        "sources": {
+          "rss": ["https://www.anthropic.com/feed.xml"],
+          "github_repos": ["anthropics/claude-code", "anthropics/anthropic-sdk-python"],
+          "twitter_users": ["AnthropicAI", "claudeai"],
+          "reddit_subreddits": ["Anthropic"],
+          "news_keywords": ["Anthropic Claude", "Anthropic API"],
+          "web_pages": ["https://www.anthropic.com/pricing"]
+        }
+      },
+      {
+        "name": "OpenAI",
+        "slug": "openai",
+        "enabled": true,
+        "tags": ["ai-llm", "api-provider"],
+        "signal_types": ["product_launch", "pricing_change", "funding", "partnership", "technical_release", "leadership"],
+        "sources": {
+          "rss": ["https://openai.com/news/rss.xml"],
+          "github_repos": ["openai/openai-python", "openai/openai-cookbook"],
+          "twitter_users": ["OpenAI", "sama", "gdb"],
+          "reddit_subreddits": ["OpenAI"],
+          "news_keywords": ["OpenAI GPT", "OpenAI o3", "OpenAI launch"],
+          "web_pages": ["https://openai.com/pricing"]
+        }
+      },
+      {
+        "name": "Google DeepMind",
+        "slug": "google-deepmind",
+        "enabled": true,
+        "tags": ["ai-llm", "api-provider"],
+        "signal_types": ["product_launch", "technical_release", "partnership"],
+        "sources": {
+          "rss": ["https://blog.google/technology/ai/rss/", "https://deepmind.google/discover/blog/feed"],
+          "github_repos": ["google-gemini/gemini-cli", "google/gemma_pytorch"],
+          "twitter_users": ["GoogleAI", "GeminiApp", "GoogleDeepMind"],
+          "news_keywords": ["Gemini AI", "Google AI", "Gemma model"]
+        }
+      }
+    ],
+
+    "producthunt": {
+      "enabled": false,
+      "topics": ["artificial-intelligence", "developer-tools"],
+      "companies": ["openai", "anthropic"],
+      "fetch_top_daily": 20
+    },
+
+    "googlenews": {
+      "enabled": true,
+      "keywords": [
+        "competitor analysis AI tools",
+        "AI SaaS funding",
+        "LLM API pricing"
+      ],
+      "max_items_per_keyword": 5,
+      "language": "en",
+      "region": "US"
+    },
+
+    "web_monitoring": {
+      "enabled": false,
+      "targets": [
+        {
+          "url": "https://openai.com/pricing",
+          "name": "OpenAI Pricing",
+          "enabled": true,
+          "selector": ".pricing-table",
+          "keywords": ["price", "price change", "new tier", "per token"]
+        },
+        {
+          "url": "https://www.anthropic.com/pricing",
+          "name": "Anthropic Pricing",
+          "enabled": true,
+          "selector": "",
+          "keywords": ["price", "price change", "new tier"]
+        }
+      ]
+    }
+  }
+}

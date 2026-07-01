@@ -1,0 +1,26 @@
+{
+  "id": "conv-1780184118819-pnb2xzumr",
+  "providerId": "codex",
+  "title": "你好",
+  "titleGenerationStatus": "failed",
+  "createdAt": 1780184118819,
+  "updatedAt": 1780196224069,
+  "lastResponseAt": 1780196224069,
+  "sessionId": "019e7b4e-888f-7773-9a98-e1b119c8c8d6",
+  "providerState": {
+    "threadId": "019e7b4e-888f-7773-9a98-e1b119c8c8d6",
+    "sessionFilePath": "C:\\Users\\Administrator\\.codex\\sessions\\2026\\05\\31\\rollout-2026-05-31T07-53-24-019e7b4e-888f-7773-9a98-e1b119c8c8d6.jsonl",
+    "transcriptRootPath": "C:\\Users\\Administrator\\.codex\\sessions"
+  },
+  "currentNote": "tools/Horizon/data/summaries/horizon-2026-05-30-zh.md",
+  "usage": {
+    "inputTokens": 127602,
+    "cacheCreationInputTokens": 0,
+    "cacheReadInputTokens": 126720,
+    "contextWindow": 258400,
+    "contextWindowIsAuthoritative": true,
+    "contextTokens": 127602,
+    "percentage": 49,
+    "model": "sensenova/deepseek-v4-flash"
+  }
+}
