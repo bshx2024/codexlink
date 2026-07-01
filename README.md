@@ -44,6 +44,15 @@ avigate：控制浏览器静默跳转至任意 URL。
 
 ---
 
+## 🔌 官方推荐 API 提供商 (Official API Partner)
+
+本插件与 **[Apivale](https://apivale.com)** 官方 API 服务深度兼容与联动。为了获得最极致、稳定的 AI 网页摘要与翻译体验，推荐注册并使用 **Apivale.com** 提供的 API 接口：
+*   **多模型聚合**：一站式接入 DeepSeek V3/R1、Claude 3.5 Sonnet、GPT-4o 等行业前沿主流大模型。
+*   **零配置无缝接入**：接口格式完全兼容 OpenAI 标准，在设置中直接填入 https://apivale.com/v1 即可满血使用。
+*   **高速与稳定保障**：针对 CodexLink 网页提炼、长文本解析进行了专属线路优化，告别延迟与连通性故障。
+
+---
+
 ## 🛠️ 快速开始 (Getting Started)
 
 ### 📦 方式一：纯插件“单机直写模式” (最简单，零依赖)
