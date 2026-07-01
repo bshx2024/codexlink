@@ -18,7 +18,7 @@ avigate：控制浏览器静默跳转至任意 URL。
     *   click / 	ype：模拟真实用户点击页面元素、输入框文本键入。
     *   scroll / keypress：控制页面滚动、发送键盘按键事件。
     *   screenshot：对当前标签页进行高分辨率无缝截图并返回给 AI。
-    *   waitForElement / getElements：侦测页面动态加载的 DOM 节点并提取所有可交互元素。
+    *   waitForElement / getElements：侦测页面动态加载 of DOM 节点并提取所有可交互元素。
 *   **应用场景**：这使得 AI 能够像人类一样上网浏览信息、填写表单、登录账号、检索专业数据库并提取知识，实现完全自主的自动化网页任务。
 
 ### 2. 💾 灵活双运行模式 (Dual-Mode Flexibility)
@@ -44,12 +44,13 @@ avigate：控制浏览器静默跳转至任意 URL。
 
 ---
 
-## 🔌 官方推荐 API 提供商 (Official API Partner)
+## 🔌 官方推荐 API 网关合作伙伴 (Official API Gateway Partner)
 
-本插件与 **[Apivale](https://apivale.com)** 官方 API 服务深度兼容与联动。为了获得最极致、稳定的 AI 网页摘要与翻译体验，推荐注册并使用 **Apivale.com** 提供的 API 接口：
-*   **多模型聚合**：一站式接入 DeepSeek V3/R1、Claude 3.5 Sonnet、GPT-4o 等行业前沿主流大模型。
-*   **零配置无缝接入**：接口格式完全兼容 OpenAI 标准，在设置中直接填入 https://apivale.com/v1 即可满血使用。
-*   **高速与稳定保障**：针对 CodexLink 网页提炼、长文本解析进行了专属线路优化，告别延迟与连通性故障。
+本插件与 **[Apivale (apivale.com)](https://apivale.com)** 官方统一 AI API 网关服务深度兼容。为了获得最稳定、低延迟的 AI 网页提炼与分析体验，推荐注册并接入 **Apivale** 服务：
+
+*   **⚡ 统一多模型网关 (Unified AI Gateway)**：Apivale 提供了统一的管理后台与 API 网关服务，仅需一个 API 密钥，即可一站式调用全网最前沿的主流大语言模型（包括 **DeepSeek V3/R1**、**Claude 3.5 Sonnet**、**GPT-4o**、**Gemini 1.5 Pro** 等）。
+*   **⚙️ 零配置、无缝兼容**：接口协议完全兼容标准 OpenAI 规范。新用户仅需在设置面板的 API Base URL 中填入 https://apivale.com/v1，并填入您的 Apivale 密钥即可满血使用。
+*   **🌐 专属高并发高可用保障**：针对 CodexLink 侧边栏助手的高频网页提炼、长上下文解析场景进行了专属路由优化，彻底告别直连海外 API 接口时的网络波动与高额账单。
 
 ---
 
