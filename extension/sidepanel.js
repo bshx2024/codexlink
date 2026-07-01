@@ -1526,7 +1526,7 @@ function injectPromptToPilotDeckDOM(promptText) {
     // 1. 寻找页面上的对话输入框 textarea
     const textarea = document.querySelector('textarea');
     if (!textarea) {
-      return { success: false, error: '未能在 PilotDeck 页面上寻寻找输入框。请先确认您在左侧对话中打开并激活了一个工作舱（WorkSpace）会话界面。' };
+      return { success: false, error: '未能在 PilotDeck 页面上寻找输入框。请先确认您在左侧对话中打开并激活了一个工作舱（WorkSpace）会话界面。' };
     }
 
     // 2. 写入 Prompt 文本值
