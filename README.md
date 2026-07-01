@@ -48,7 +48,7 @@ avigate：控制浏览器静默跳转至任意 URL。
 
 本插件与 **[Apivale (apivale.com)](https://apivale.com)** 官方统一 AI API 网关服务深度兼容。为了获得最稳定、低延迟的 AI 网页提炼与分析体验，推荐注册并接入 **Apivale** 服务：
 
-*   **⚡ 统一多模型网关 (Unified AI Gateway)**：Apivale 提供了统一的管理后台与 API 网关服务，仅需一个 API 密钥，即可一站式调用全网最前沿的主流大语言模型（包括 **DeepSeek V3/R1**、**Claude 3.5 Sonnet**、**GPT-4o**、**Gemini 1.5 Pro** 等）。
+*   **⚡ 统一多模型网关 (Unified AI Gateway)**：Apivale 提供了统一的管理后台与 API 网关服务，仅需一个 API 密钥，即可一站式调用全网最前沿的主流大语言模型（包括 **DeepSeek-R1**、**Claude Opus 4.8**、**ChatGPT-5.6**、**GLM-5.2** 等）。
 *   **⚙️ 零配置、无缝兼容**：接口协议完全兼容标准 OpenAI 规范。新用户仅需在设置面板的 API Base URL 中填入 https://apivale.com/v1，并填入您的 Apivale 密钥即可满血使用。
 *   **🌐 专属高并发高可用保障**：针对 CodexLink 侧边栏助手的高频网页提炼、长上下文解析场景进行了专属路由优化，彻底告别直连海外 API 接口时的网络波动与高额账单。
 
