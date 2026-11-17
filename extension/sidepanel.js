@@ -532,11 +532,19 @@ async function handleRemoteAgentAction(action, data = {}) {
       };
     }
 
-    // 3. 用户 Profile 获取 (支持动态传入话题匹配的专属落地页内页与个性化锚文本)
-    const baseProfile = getActiveUserProfile();
-    const profile = Object.assign({}, baseProfile, data.profile || {});
+    // 3. 用户 Profile 获取与落地页/昵称动态轮换
+    const profile = getActiveUserProfile();
+
+    // 🌟 落地页按话题精准指定（严禁默认回退为通用首页）
+    if (data.targetUrl) profile.websiteUrl = data.targetUrl;
     if (data.websiteUrl) profile.websiteUrl = data.websiteUrl;
-    if (data.profileName) profile.profileName = data.profileName;
+
+    // 🌟 昵称轮换机制（每次发布轮换 Alex / Marcus / Elena / David / Sarah / Leo 等，避免重复痕迹）
+    if (data.profileName) {
+      profile.profileName = data.profileName;
+    } else {
+      profile.profileName = getNextRotatedPersona(profile.profileName);
+    }
 
     // 4. 生成或使用评论 (3-Step 战略性见解格式)
     let commentText = (data.comment || '').trim();
@@ -1331,6 +1339,31 @@ function markCurrentTabAsDoneInQueue(urlToMark = null, silent = false) {
     alert('✔ 已将当前网页在批量队列中标记为【已完成】！');
   }
   return { success: true, matched };
+}
+
+const PERSONA_POOL = [
+  'Marcus | APIVALE Infra',
+  'Elena @ APIVALE',
+  'David | APIVALE Dev',
+  'Sarah @ APIVALE',
+  'Leo | APIVALE Systems',
+  'Nathan @ APIVALE',
+  'Rachel | APIVALE AI',
+  'Julian @ APIVALE',
+  'Chloe | APIVALE API',
+  'Ryan @ APIVALE'
+];
+
+function getNextRotatedPersona(currentName = '') {
+  let idx = 0;
+  try {
+    idx = parseInt(localStorage.getItem('comlinkai_persona_idx') || '0', 10);
+  } catch (e) {}
+  const nextPersona = PERSONA_POOL[idx % PERSONA_POOL.length];
+  try {
+    localStorage.setItem('comlinkai_persona_idx', String((idx + 1) % PERSONA_POOL.length));
+  } catch (e) {}
+  return nextPersona;
 }
 
 // 辅助方法：获取项目或本地存储中的活跃用户 Profile
