@@ -73,16 +73,28 @@ class ProjectManager {
         pricingType: legacyProfile.pricingType || 'Freemium',
         faviconUrl: legacyProfile.faviconUrl || 'https://apivale.com/favicon.ico',
         screenshotUrl: legacyProfile.screenshotUrl || 'https://apivale.com/logo.png',
-        gsheetWebhook: '',
-        gsheetAutoSync: false,
+        gsheetWebhook: 'https://script.google.com/macros/s/AKfycbwgsylx1cU7CJg2q8F9LMVU8yS2iZ101LuFPH5r9Iwjc5Ug1qKLxhM63hE0HKTGWmEu_g/exec',
+        gsheetAutoSync: true,
         createdAt: new Date().toISOString()
       };
 
       this.projects.push(defaultProject);
       this.saveProjects();
       this.setActiveProjectId('proj_default');
-    } else if (!this.activeProjectId || !this.projects.find(p => p.id === this.activeProjectId)) {
-      this.setActiveProjectId(this.projects[0].id);
+    } else {
+      let modified = false;
+      this.projects.forEach(p => {
+        if (!p.gsheetWebhook || !p.gsheetWebhook.startsWith('https://script.google.com')) {
+          p.gsheetWebhook = 'https://script.google.com/macros/s/AKfycbwgsylx1cU7CJg2q8F9LMVU8yS2iZ101LuFPH5r9Iwjc5Ug1qKLxhM63hE0HKTGWmEu_g/exec';
+          p.gsheetAutoSync = true;
+          modified = true;
+        }
+      });
+      if (modified) this.saveProjects();
+
+      if (!this.activeProjectId || !this.projects.find(p => p.id === this.activeProjectId)) {
+        this.setActiveProjectId(this.projects[0].id);
+      }
     }
   }
 

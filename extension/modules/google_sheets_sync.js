@@ -117,6 +117,8 @@ function doPost(e) {
 }
 `;
 
+const OFFICIAL_DEFAULT_WEBHOOK = 'https://script.google.com/macros/s/AKfycbwgsylx1cU7CJg2q8F9LMVU8yS2iZ101LuFPH5r9Iwjc5Ug1qKLxhM63hE0HKTGWmEu_g/exec';
+
 class GoogleSheetsSync {
   constructor() {
     this.storageKey = 'comlinkai_gsheet_config';
@@ -126,7 +128,7 @@ class GoogleSheetsSync {
   }
 
   loadConfig() {
-    let cfg = { webhookUrl: '', autoSync: true };
+    let cfg = { webhookUrl: OFFICIAL_DEFAULT_WEBHOOK, autoSync: true };
     // 1. 从 localStorage 读取
     try {
       const data = localStorage.getItem(this.storageKey);
@@ -136,7 +138,7 @@ class GoogleSheetsSync {
     } catch (e) {}
 
     // 2. 若为空，尝试从当前独立站项目的工程档案中继承
-    if (!cfg.webhookUrl && typeof window !== 'undefined' && window.projectManager) {
+    if ((!cfg.webhookUrl || !cfg.webhookUrl.startsWith('https://script.google.com')) && typeof window !== 'undefined' && window.projectManager) {
       try {
         const activeProj = window.projectManager.getActiveProject();
         if (activeProj && activeProj.gsheetWebhook) {
@@ -144,6 +146,11 @@ class GoogleSheetsSync {
           cfg.autoSync = activeProj.gsheetAutoSync !== false;
         }
       } catch (e) {}
+    }
+
+    if (!cfg.webhookUrl || !cfg.webhookUrl.startsWith('https://script.google.com')) {
+      cfg.webhookUrl = OFFICIAL_DEFAULT_WEBHOOK;
+      cfg.autoSync = true;
     }
 
     // 3. 跨设备与跨版本自动恢复：通过 Chrome 账号云同步 (chrome.storage.sync) 异步回填
