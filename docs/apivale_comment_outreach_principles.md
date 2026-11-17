@@ -31,12 +31,22 @@
 
 ---
 
-## 三、 锚文本自然差异化 (Anchor Text Scattering)
+## 三、 锚文本与 Persona 身份协同规则 (Anchor Text & Persona Matching)
 
-1. **富文本/自定锚文本场景**：
+1. **Persona 身份与落地页作者 100% 对应**：
+   - 每次发布评论前，**看一眼落地页文章在 APIVALE 官网对应的真实作者**，将昵称与文章作者完全对齐：
+     - `/blog/claude-fable-5-2-api-pricing-guide/` 👉 作者为 **Kenji Tanaka**（填写 `Kenji Tanaka @ APIVALE` 或 `Kenji Tanaka | APIVALE`）
+     - `/blog/claude-fable-5-2-vs-opus-5-5...` 👉 作者为 **Sarah Chen**（填写 `Sarah Chen @ APIVALE`）
+     - `/blog/qwen-4-preview-setup...` 👉 作者为 **Chen Wei**（填写 `Chen Wei @ APIVALE`）
+     - 性能工程类内页 👉 作者为 **Elena Rostova**（填写 `Elena Rostova @ APIVALE`）
+     - 云架构与接口网关类内页 👉 作者为 **Alex Rivera**（填写 `Alex Rivera @ APIVALE`）
+   - **极致公信力**：读者与博主顺着外链点击进入文章后，看到博文署名与评论者完全一致，形成闭环权威背书。
+2. **统一官方邮箱**：
+   - 所有 APIVALE 外链评论的邮箱统一固定为：`support@apivale.com`。
+3. **富文本/自定锚文本场景**：
    - 提取内页 `Title` 或 `H1` 里的**核心长尾词**作为链接文本（如 `Qwen 4 Max API pricing`、`connect Kimi K3 to Codex CLI`）。
    - **严禁全站统一锚文本**：切忌 100 条外链清一色写 `apivale` 或 `AI API`，高度单一的商用锚文本极易触发谷歌防外链操纵算法。
-2. **纯 URL / 昵称展示场景 (WordPress / Webmention / Ghost)**：
+4. **纯 URL / 昵称展示场景 (WordPress / Webmention / Ghost)**：
    - 链接只能挂在昵称（Name）或原生 Website 字段时，挑选**相关度极高**的博客精准发布，依靠博文正文语义与出站上下文建立相关性。
 
 ---
