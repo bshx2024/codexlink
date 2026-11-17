@@ -151,6 +151,13 @@ class PublishLogger {
   }
 
   /**
+   * 兼容别名方法：logPublish 等价于 logAction
+   */
+  logPublish(entry) {
+    return this.logAction(entry);
+  }
+
+  /**
    * 更新特定日志条目的验证探针结果
    */
   updateVerifyStatus(id, result) {

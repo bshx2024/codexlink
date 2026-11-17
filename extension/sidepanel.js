@@ -475,6 +475,155 @@ async function handleRemoteAgentAction(action, data = {}) {
     throw new Error(`等待元素 [${selector}] 超时 (${timeout}ms)`);
   }
 
+  // --------------------------------------------------------------------------
+  // ComLinkAI 业务级自动化动作 (High-Level Auto-Pilot & Batch Actions)
+  // --------------------------------------------------------------------------
+  if (action === 'collect_google_results') {
+    return await scrapeGoogleSearchResultsHandler(true);
+  }
+
+  if (action === 'get_queue') {
+    const total = currentBatchQueue.length;
+    const pending = currentBatchQueue.filter(i => i.status === 'pending').length;
+    const done = currentBatchQueue.filter(i => i.status === 'done').length;
+    const skipped = currentBatchQueue.filter(i => (i.status || '').startsWith('skipped')).length;
+    const toxic = currentBatchQueue.filter(i => i.status === 'toxic').length;
+    return {
+      queue: currentBatchQueue,
+      summary: { total, pending, done, skipped, toxic }
+    };
+  }
+
+  if (action === 'process_active_tab_comment') {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab || !tab.id) throw new Error('未找到当前活跃标签页');
+
+    const tabData = await fetchActiveTabContent();
+    const currentUrl = tab.url || tabData.url || '';
+    const title = tab.title || tabData.title || currentUrl;
+    let hostName = '';
+    try { hostName = new URL(currentUrl).hostname; } catch (e) {}
+
+    // 1. 频控防骚扰检查 (24h)
+    if (window.publishLogger && hostName) {
+      if (window.publishLogger.isDomainRateLimited(hostName)) {
+        return {
+          success: false,
+          skipped: true,
+          reason: `域名 ${hostName} 在 24 小时内已发布过评论，自动触发防骚扰频控限制跳过。`
+        };
+      }
+    }
+
+    // 2. 页面评论表单快速探测
+    const probeRes = await executeInTab(tab.id, () => {
+      const text = (document.body ? document.body.innerText : '').toLowerCase();
+      const isClosed = text.includes('comments are closed') || text.includes('评论已关闭') || text.includes('关闭了评论');
+      const hasForm = !!document.querySelector('textarea, form[action*="comment" i], #commentform, .comment-form, input[name*="comment" i]');
+      return { isClosed, hasForm, bodySnippet: text.slice(0, 3000) };
+    });
+
+    if (!probeRes || (!probeRes.hasForm && probeRes.isClosed)) {
+      markCurrentTabAsDoneInQueue(currentUrl, true);
+      return {
+        success: false,
+        skipped: true,
+        reason: '当前页面评论已关闭或未找到评论输入表单'
+      };
+    }
+
+    // 3. 用户 Profile 获取
+    const profile = getActiveUserProfile();
+
+    // 4. 生成或使用评论 (3-Step 战略性见解格式)
+    let commentText = (data.comment || '').trim();
+    if (!commentText) {
+      commentText = await generateCommentForArticle(title, currentUrl, probeRes.bodySnippet || tabData.contentSnippet, profile);
+    }
+
+    // 5. 填表与提交
+    const submitRes = await executeInTab(tab.id, submitCommentFormInTab, [commentText, profile]);
+
+    // 6. 标记侧边栏队列状态打删除线
+    const queueMarked = markCurrentTabAsDoneInQueue(currentUrl, true);
+
+    // 7. 写入 PublishLogger 审计日志 (自动触发 Google Sheets 同步)
+    let logItem = null;
+    if (window.publishLogger) {
+      try {
+        logItem = window.publishLogger.logAction({
+          url: currentUrl,
+          title: title,
+          domain: hostName,
+          comment: commentText,
+          status: 'published'
+        });
+      } catch (e) {
+        console.warn('记录 publishLogger 失败:', e);
+      }
+    }
+
+    // 8. 确保同步到 Google Sheets (若已配置)
+    let gsheetSyncResult = null;
+    if (window.googleSheetsSync && logItem && window.googleSheetsSync.isConfigured()) {
+      try {
+        gsheetSyncResult = await window.googleSheetsSync.syncLogEntry(logItem);
+      } catch (e) {}
+    }
+
+    return {
+      success: true,
+      url: currentUrl,
+      title: title,
+      domain: hostName,
+      comment: commentText,
+      submitted: Boolean(submitRes && submitRes.submitted),
+      captchaPresent: Boolean(submitRes && submitRes.captchaPresent),
+      queueMarkedDone: queueMarked.matched,
+      logged: Boolean(logItem),
+      gsheetSynced: Boolean(gsheetSyncResult && gsheetSyncResult.success)
+    };
+  }
+
+  if (action === 'autopilot_start') {
+    if (!autoPilotEngine.running || autoPilotEngine.paused) {
+      await autoPilotEngine.start();
+    }
+    return {
+      success: true,
+      running: autoPilotEngine.running,
+      paused: autoPilotEngine.paused
+    };
+  }
+
+  if (action === 'autopilot_pause') {
+    autoPilotEngine.pause();
+    return {
+      success: true,
+      running: autoPilotEngine.running,
+      paused: autoPilotEngine.paused
+    };
+  }
+
+  if (action === 'autopilot_stop') {
+    autoPilotEngine.stop();
+    return {
+      success: true,
+      running: false,
+      paused: false
+    };
+  }
+
+  if (action === 'autopilot_status') {
+    return {
+      running: autoPilotEngine.running,
+      paused: autoPilotEngine.paused,
+      activeTabId: autoPilotEngine.activeTabId,
+      activeGroupId: autoPilotEngine.activeGroupId,
+      logs: (autoPilotEngine.logs || []).slice(-20)
+    };
+  }
+
   throw new Error(`未知的操作指令: ${action}`);
 }
 
@@ -1154,20 +1303,31 @@ async function detectAndFillDirectoryFormInTab(profile) {
   };
 }
 
-function markCurrentTabAsDoneInQueue() {
-  const currentUrl = document.getElementById('tab-url') ? document.getElementById('tab-url').textContent : '';
-  if (!currentUrl) return;
+function markCurrentTabAsDoneInQueue(urlToMark = null, silent = false) {
+  let targetUrl = urlToMark;
+  if (!targetUrl) {
+    targetUrl = document.getElementById('tab-url') ? document.getElementById('tab-url').textContent : '';
+  }
+  if (!targetUrl && currentExtractedContent && currentExtractedContent.url) {
+    targetUrl = currentExtractedContent.url;
+  }
+  if (!targetUrl) return { success: false, matched: false };
 
-  const clean = currentUrl.split('#')[0].replace(/\/+$/, '').toLowerCase();
+  const clean = targetUrl.split('#')[0].replace(/\/+$/, '').toLowerCase();
+  let matched = false;
   currentBatchQueue.forEach(item => {
     if (item.url && item.url.split('#')[0].replace(/\/+$/, '').toLowerCase() === clean) {
       item.status = 'done';
+      matched = true;
     }
   });
 
   localStorage.setItem('comlinkai_batch_queue', JSON.stringify(currentBatchQueue));
   updateBatchUI();
-  alert('✔ 已将当前网页在批量队列中标记为【已完成】！');
+  if (!silent) {
+    alert('✔ 已将当前网页在批量队列中标记为【已完成】！');
+  }
+  return { success: true, matched };
 }
 
 // 辅助方法：获取项目或本地存储中的活跃用户 Profile
@@ -1704,13 +1864,16 @@ async function goToGoogleNextPageAndScrape() {
   }
 }
 
-async function scrapeGoogleSearchResultsHandler() {
+async function scrapeGoogleSearchResultsHandler(silent = false) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab || !tab.id) return;
+  if (!tab || !tab.id) {
+    if (!silent) alert('未检测到活跃标签页，请先在浏览器中切换到 Google 搜索结果页面！');
+    return { success: false, error: '未检测到活跃标签页' };
+  }
 
   if (!tab.url || !tab.url.includes('google.com/search')) {
-    alert('请先在 Google 搜索结果页面点击此按钮以自动提取搜索结果外链！');
-    return;
+    if (!silent) alert('请先在 Google 搜索结果页面点击此按钮以自动提取搜索结果外链！');
+    return { success: false, error: '当前活跃标签页非 Google 搜索结果页面' };
   }
 
   const btnScrapeGoogle = document.getElementById('btn-scrape-google');
@@ -1805,8 +1968,8 @@ async function scrapeGoogleSearchResultsHandler() {
 
     const extracted = results && results[0] ? results[0].result : [];
     if (!extracted || extracted.length === 0) {
-      alert('未在当前 Google 搜索页提取到有效外部链接，请确保当前页面为已加载完成的搜索结果页。');
-      return;
+      if (!silent) alert('未在当前 Google 搜索页提取到有效外部链接，请确保当前页面为已加载完成的搜索结果页。');
+      return { success: false, error: '未在当前 Google 搜索页提取到有效外部链接' };
     }
 
     // 🌟 如果旧批次已经 100% 全部完成，自动归档并清空旧批次，载入全新的 10 条
@@ -1855,9 +2018,18 @@ async function scrapeGoogleSearchResultsHandler() {
 
     localStorage.setItem('comlinkai_batch_queue', JSON.stringify(currentBatchQueue));
     updateBatchUI();
-    alert(`🎉 成功从 Google 搜索结果中提取 ${added} 条优质外链（当前批次共 ${currentBatchQueue.length} 条）！\n建议完成本组 10 条发布后，点击翻页载入下一组。`);
+    if (!silent) {
+      alert(`🎉 成功从 Google 搜索结果中提取 ${added} 条优质外链（当前批次共 ${currentBatchQueue.length} 条）！\n建议完成本组 10 条发布后，点击翻页载入下一组。`);
+    }
+    return {
+      success: true,
+      addedCount: added,
+      totalQueue: currentBatchQueue.length,
+      queue: currentBatchQueue
+    };
   } catch (err) {
-    alert('抓取 Google 结果失败: ' + err.message);
+    if (!silent) alert('抓取 Google 结果失败: ' + err.message);
+    return { success: false, error: err.message };
   } finally {
     if (btnScrapeGoogle) {
       btnScrapeGoogle.disabled = false;

@@ -120,7 +120,9 @@ function doPost(e) {
 class GoogleSheetsSync {
   constructor() {
     this.storageKey = 'comlinkai_gsheet_config';
+    this.retryQueueKey = 'comlinkai_gsheet_retry_queue';
     this.config = this.loadConfig();
+    this._isFlushing = false;
   }
 
   loadConfig() {
@@ -130,6 +132,27 @@ class GoogleSheetsSync {
     } catch (e) {
       return { webhookUrl: '', autoSync: false };
     }
+  }
+
+  _loadRetryQueue() {
+    try {
+      const data = localStorage.getItem(this.retryQueueKey);
+      return data ? JSON.parse(data) : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  _saveRetryQueue(queue) {
+    try {
+      localStorage.setItem(this.retryQueueKey, JSON.stringify((queue || []).slice(0, 500)));
+    } catch (e) {
+      console.warn('[GSheetsSync] 保存离线重试队列失败:', e);
+    }
+  }
+
+  getPendingRetryCount() {
+    return this._loadRetryQueue().length;
   }
 
   saveConfig(webhookUrl, autoSync) {
@@ -251,10 +274,53 @@ class GoogleSheetsSync {
         body: JSON.stringify(payload)
       });
 
+      // 发送成功后，若有历史离线条目，后台异步触发刷新
+      setTimeout(() => this.flushRetryQueue(), 500);
+
       return { success: true, message: '数据已平滑推送至 Google Sheet' };
     } catch (e) {
-      console.warn('[GSheetsSync] 推送 Google Sheet 失败:', e);
-      return { success: false, reason: e.message };
+      console.warn('[GSheetsSync] 推送 Google Sheet 失败，已加入离线重试队列:', e);
+      // 离线容错：将失败条目持久化到重试队列
+      const queue = this._loadRetryQueue();
+      queue.push(payload);
+      this._saveRetryQueue(queue);
+      return { success: false, queuedForRetry: true, reason: e.message };
+    }
+  }
+
+  /**
+   * 渐进式消费离线重试队列，自动恢复补发
+   */
+  async flushRetryQueue() {
+    if (this._isFlushing || !this.isConfigured()) return;
+    const queue = this._loadRetryQueue();
+    if (!queue.length) return;
+
+    this._isFlushing = true;
+    console.log(`[GSheetsSync] 正在尝试清空离线重试队列，待重试: ${queue.length} 条...`);
+
+    const remaining = [...queue];
+    try {
+      while (remaining.length > 0) {
+        const item = remaining[0];
+        try {
+          await fetch(this.config.webhookUrl, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(item)
+          });
+          remaining.shift();
+          this._saveRetryQueue(remaining);
+          await new Promise(r => setTimeout(r, 400));
+        } catch (postErr) {
+          console.warn('[GSheetsSync] 离线队列重试中断 (网络仍未恢复):', postErr);
+          break;
+        }
+      }
+    } finally {
+      this._saveRetryQueue(remaining);
+      this._isFlushing = false;
     }
   }
 

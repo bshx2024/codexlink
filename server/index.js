@@ -477,13 +477,14 @@ function callExtensionAction(action, data = {}) {
 
     const requestId = Math.random().toString(36).substring(2, 11);
     
-    // 设置 15 秒超时
+    // 动态超时：耗时业务操作 (评论生成/Google抓取/AutoPilot) 给予 45 秒，常规操作 25 秒
+    const timeoutMs = (data && data.timeout) ? data.timeout : (['process_active_tab_comment', 'collect_google_results', 'autopilot_start'].includes(action) ? 45000 : 25000);
     const timeout = setTimeout(() => {
       if (pendingRequests.has(requestId)) {
         pendingRequests.delete(requestId);
-        reject(new Error(`向浏览器插件请求 [${action}] 超时（15秒内未响应）。`));
+        reject(new Error(`向浏览器插件请求 [${action}] 超时（${Math.round(timeoutMs / 1000)}秒内未响应）。`));
       }
-    }, 15000);
+    }, timeoutMs);
 
     pendingRequests.set(requestId, { resolve, reject, timeout });
 
@@ -643,6 +644,43 @@ function handleMcpRequest(req) {
             },
             required: ['mode']
           }
+        },
+        {
+          name: 'sidepanel_collect_google_results',
+          description: '自动在当前活跃的 Google 搜索结果页面中嗅探并提取前 10 条高权重外链，并载入 ComLinkAI 侧边栏批量发布队列。',
+          inputSchema: {
+            type: 'object',
+            properties: {}
+          }
+        },
+        {
+          name: 'sidepanel_process_comment',
+          description: '触发 ComLinkAI 侧边栏原生战略性评论发布流水线：提取当前博文、嗅探表单、基于 3-Step 公式生成专业见解评论、通过原生 Name/Website 软广字段填表提交、在侧边栏队列打删除线并记入 PublishLogger 审计日志与 Google Sheets。',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              comment: { type: 'string', description: '可选，若不传则由 ComLinkAI 根据博文内容与 Profile 自动构思生成' }
+            }
+          }
+        },
+        {
+          name: 'sidepanel_get_queue',
+          description: '获取 ComLinkAI 侧边栏当前批次外链队列详情及发布进度统计。',
+          inputSchema: {
+            type: 'object',
+            properties: {}
+          }
+        },
+        {
+          name: 'sidepanel_autopilot_control',
+          description: '控制 ComLinkAI Auto-Pilot 全自动挂机引擎 (start/pause/stop/status)。',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              action: { type: 'string', enum: ['start', 'pause', 'stop', 'status'], description: '挂机操作指令' }
+            },
+            required: ['action']
+          }
         }
       ]
     });
@@ -672,6 +710,14 @@ function handleMcpRequest(req) {
       handleBrowserKeypressTool(id, args.key, args.selector);
     } else if (toolName === 'browser_wait') {
       handleBrowserWaitTool(id, args.mode, args.selector, args.timeout);
+    } else if (toolName === 'sidepanel_collect_google_results') {
+      handleCollectGoogleResultsTool(id);
+    } else if (toolName === 'sidepanel_process_comment') {
+      handleSidepanelProcessCommentTool(id, args.comment);
+    } else if (toolName === 'sidepanel_get_queue') {
+      handleSidepanelGetQueueTool(id);
+    } else if (toolName === 'sidepanel_autopilot_control') {
+      handleSidepanelAutoPilotControlTool(id, args.action);
     } else {
       sendMcpError(id, -32601, `Method not found: ${toolName}`);
     }
@@ -986,6 +1032,81 @@ async function handleBrowserWaitTool(requestId, mode, selector, timeout) {
     log('工具执行失败:', err.message);
     sendMcpResponse(requestId, {
       content: [{ type: 'text', text: `[错误]: 等待失败。原因：${err.message}` }],
+      isError: true
+    });
+  }
+}
+
+async function handleCollectGoogleResultsTool(requestId) {
+  try {
+    const res = await callExtensionAction('collect_google_results');
+    sendMcpResponse(requestId, {
+      content: [{ type: 'text', text: `Google 搜索结果抓取成功！新增抓取：${res.addedCount || 0} 条，当前侧边栏批次总数：${res.totalQueue || 0} 条。` }],
+      isError: false
+    });
+  } catch (err) {
+    sendMcpResponse(requestId, {
+      content: [{ type: 'text', text: `[错误]: 抓取 Google 结果失败: ${err.message}` }],
+      isError: true
+    });
+  }
+}
+
+async function handleSidepanelProcessCommentTool(requestId, comment) {
+  try {
+    const res = await callExtensionAction('process_active_tab_comment', { comment });
+    if (res.skipped) {
+      sendMcpResponse(requestId, {
+        content: [{ type: 'text', text: `[已安全跳过]: ${res.reason}` }],
+        isError: false
+      });
+      return;
+    }
+    const msg = `已顺利完成博客留言外链建设！\n目标: ${res.title} (${res.url})\n评论内容: ${res.comment}\n侧边栏删除线状态: ${res.queueMarkedDone ? '已标记完成(已划线)' : '队列未包含'}\n已记录审计日志: ${res.logged}\nGoogle Sheets 云端同步: ${res.gsheetSynced ? '成功' : '离线重试/未配置'}`;
+    sendMcpResponse(requestId, {
+      content: [{ type: 'text', text: msg }],
+      isError: false
+    });
+  } catch (err) {
+    sendMcpResponse(requestId, {
+      content: [{ type: 'text', text: `[错误]: 处理评论发布失败: ${err.message}` }],
+      isError: true
+    });
+  }
+}
+
+async function handleSidepanelGetQueueTool(requestId) {
+  try {
+    const res = await callExtensionAction('get_queue');
+    sendMcpResponse(requestId, {
+      content: [{ type: 'text', text: JSON.stringify(res, null, 2) }],
+      isError: false
+    });
+  } catch (err) {
+    sendMcpResponse(requestId, {
+      content: [{ type: 'text', text: `[错误]: 获取侧边栏队列失败: ${err.message}` }],
+      isError: true
+    });
+  }
+}
+
+async function handleSidepanelAutoPilotControlTool(requestId, action) {
+  try {
+    const map = {
+      start: 'autopilot_start',
+      pause: 'autopilot_pause',
+      stop: 'autopilot_stop',
+      status: 'autopilot_status'
+    };
+    const actName = map[action] || 'autopilot_status';
+    const res = await callExtensionAction(actName);
+    sendMcpResponse(requestId, {
+      content: [{ type: 'text', text: JSON.stringify(res, null, 2) }],
+      isError: false
+    });
+  } catch (err) {
+    sendMcpResponse(requestId, {
+      content: [{ type: 'text', text: `[错误]: Auto-Pilot 指令 [${action}] 执行失败: ${err.message}` }],
       isError: true
     });
   }

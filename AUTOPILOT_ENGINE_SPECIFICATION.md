@@ -126,3 +126,17 @@
 ### 8.2 CDP (Chrome DevTools Protocol) 原生截屏硬件缩放
 * **痛点**：大量网页截图在前端注入 canvas 重新编码，导致 CPU 占用超过 100%、电脑发热、高分辨率图片极大消耗大模型 Token。
 * **解决方案**：采用 DevTools 协议 `Page.captureScreenshot`，在底层利用 Chromium C++ 渲染管线按 `clip.scale` 自动硬件缩放至最佳长宽比，出图直接交付紧凑 Base64，实现近乎零 CPU 开销与极轻 Token 传输。
+
+### 8.3 侧边栏原生业务网关 (Sidepanel Native Workflow Gateway)
+* **痛点**：外部 AI Agent 容易通过低级别原子指令（`navigate` / `click` / `type`）绕过插件侧边栏的既有状态机，导致侧边栏待发布任务未打删除线、`PublishLogger` 未审计归档、Google Sheets 未自动实时同步。
+* **解决方案**：在 `handleRemoteAgentAction` 中暴露业务级原生动作接口，外部 Agent、MCP 工具与本地中转服务均可直接触发完整的插件工作流：
+  - `collect_google_results`：一键抓取 Google 搜索结果入库并刷新侧边栏；
+  - `process_active_tab_comment`：全流程执行博文提取、表单探测、3-Step 战略性评论构思、填表提交、侧边栏划线与 Google Sheets 同步；
+  - `get_queue`：获取侧边栏队列状态与进度统计；
+  - `autopilot_start` / `autopilot_pause` / `autopilot_stop` / `autopilot_status`：完全程控 Auto-Pilot 挂机引擎。
+
+### 8.4 Google Sheets 离线重试韧性队列 (Offline Resilience Queue)
+* **痛点**：跨境网络波动或 Google Apps Script 偶发并发限流可能导致发布审计日志在推送云端表格时丢失。
+* **解决方案**：在 `GoogleSheetsSync` 模块内引入本地持久化离线重试队列（`comlinkai_gsheet_retry_queue`）：
+  - 遇到网络异常或服务端报错时，数据自动入库持久化；
+  - 下一次成功请求或空闲时，自动启动带有 400ms 限流保护的渐进式补发机制，保障 100% 零数据丢失。
