@@ -2308,18 +2308,29 @@ function submitCommentFormInTab(commentText, profile) {
   const commentTextarea = document.querySelector('textarea[name*="comment" i], textarea[id*="comment" i], textarea[placeholder*="comment" i], textarea[placeholder*="评论" i], textarea[placeholder*="留言" i], textarea[placeholder*="reply" i], textarea');
   if (commentTextarea && highlightAndFill(commentTextarea, commentText)) filledFields.push('评论正文');
 
-  const nameEl = document.querySelector('input[placeholder*="昵称" i], input[placeholder*="姓名" i], input[placeholder*="Name" i], input[placeholder*="Author" i], input[name*="author" i], input[name*="name" i], input[id*="author" i], input[id*="name" i]');
+  // 🌟 核心防误触隔离：优先在当前评论表单容器内部定位字段，绝不误触页面顶栏的邮件订阅框 (Newsletter) 或全局搜索框
+  const commentScope = (commentTextarea ? (commentTextarea.closest('form') || commentTextarea.closest('#respond, .comment-respond, .comment-form, #commentform')) : null) || document;
+
+  const nameEl = commentScope.querySelector('input[placeholder*="昵称" i], input[placeholder*="姓名" i], input[placeholder*="Name" i], input[placeholder*="Author" i], input[name*="author" i], input[name*="name" i], input[id*="author" i], input[id*="name" i]') || document.querySelector('#author, input[name="author"]');
   if (nameEl && authorName && highlightAndFill(nameEl, authorName)) filledFields.push('姓名');
 
-  const emailEl = document.querySelector('input[placeholder*="邮箱" i], input[placeholder*="Email" i], input[placeholder*="Mail" i], input[type="email"], input[name*="email" i], input[id*="email" i]');
+  const emailEl = commentScope.querySelector('input[placeholder*="邮箱" i], input[placeholder*="Email" i], input[placeholder*="Mail" i], input[type="email"], input[name*="email" i], input[id*="email" i]') || document.querySelector('#email, input[name="email"]');
   if (emailEl && authorEmail && highlightAndFill(emailEl, authorEmail)) filledFields.push('邮箱');
 
-  const urlEl = document.querySelector('input[placeholder*="网址" i], input[placeholder*="网站" i], input[placeholder*="URL" i], input[placeholder*="Website" i], input[type="url"], input[name*="url" i], input[name*="website" i], input[id*="url" i], input[id*="website" i]');
+  const urlEl = commentScope.querySelector('input[placeholder*="网址" i], input[placeholder*="网站" i], input[placeholder*="URL" i], input[placeholder*="Website" i], input[type="url"], input[name*="url" i], input[name*="website" i], input[id*="url" i], input[id*="website" i]') || document.querySelector('#url, input[name="url"]');
   if (urlEl && authorUrl && highlightAndFill(urlEl, authorUrl)) filledFields.push('引流网址');
 
+  // 自动勾选记住资料 (WordPress cookies consent checkbox)
+  const consentEl = commentScope.querySelector('#wp-comment-cookies-consent, input[name*="cookies-consent" i]');
+  if (consentEl && !consentEl.checked) {
+    consentEl.checked = true;
+    consentEl.dispatchEvent(new Event('change', { bubbles: true }));
+    filledFields.push('保存Cookie勾选');
+  }
+
   // 检查图形验证码
-  const captchaImg = document.querySelector('img[src*="captcha" i], img[src*="code" i], canvas[id*="captcha" i], img[alt*="验证码" i]');
-  const captchaInput = document.querySelector('input[placeholder*="验证码" i], input[placeholder*="Code" i], input[name*="captcha" i], input[name*="code" i], input[name*="verify" i]');
+  const captchaImg = commentScope.querySelector('img[src*="captcha" i], img[src*="code" i], canvas[id*="captcha" i], img[alt*="验证码" i]');
+  const captchaInput = commentScope.querySelector('input[placeholder*="验证码" i], input[placeholder*="Code" i], input[name*="captcha" i], input[name*="code" i], input[name*="verify" i]');
   if (captchaImg || captchaInput) {
     if (captchaInput) {
       captchaInput.style.border = '2px solid #fbbf24';
@@ -2332,7 +2343,10 @@ function submitCommentFormInTab(commentText, profile) {
     return { success: true, submitted: false, captchaPresent: true, filledCount: filledFields.length };
   }
 
-  const submitBtn = document.querySelector('button[type="submit"], input[type="submit"], button.submit, #submit, button#comment-submit, form#commentform input[type="submit"]');
+  // 提交按钮精确定位：优先在评论表单容器内部查找，彻底避免误触全局搜索框或订阅框的提交按钮
+  const commentForm = commentTextarea ? commentTextarea.closest('form') : document.querySelector('form#commentform, .comment-form, form[action*="comment" i]');
+  const submitBtn = (commentForm ? commentForm.querySelector('button[type="submit"], input[type="submit"], #submit, button.submit, input[name="submit"]') : null) || 
+                    document.querySelector('form#commentform input[type="submit"], form#commentform button[type="submit"], #commentform #submit, button#comment-submit, #submit');
   if (submitBtn) {
     try {
       submitBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
