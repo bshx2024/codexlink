@@ -532,8 +532,11 @@ async function handleRemoteAgentAction(action, data = {}) {
       };
     }
 
-    // 3. 用户 Profile 获取
-    const profile = getActiveUserProfile();
+    // 3. 用户 Profile 获取 (支持动态传入话题匹配的专属落地页内页与个性化锚文本)
+    const baseProfile = getActiveUserProfile();
+    const profile = Object.assign({}, baseProfile, data.profile || {});
+    if (data.websiteUrl) profile.websiteUrl = data.websiteUrl;
+    if (data.profileName) profile.profileName = data.profileName;
 
     // 4. 生成或使用评论 (3-Step 战略性见解格式)
     let commentText = (data.comment || '').trim();
