@@ -126,12 +126,44 @@ class GoogleSheetsSync {
   }
 
   loadConfig() {
+    let cfg = { webhookUrl: '', autoSync: true };
+    // 1. 从 localStorage 读取
     try {
       const data = localStorage.getItem(this.storageKey);
-      return data ? JSON.parse(data) : { webhookUrl: '', autoSync: false };
-    } catch (e) {
-      return { webhookUrl: '', autoSync: false };
+      if (data) {
+        cfg = { ...cfg, ...JSON.parse(data) };
+      }
+    } catch (e) {}
+
+    // 2. 若为空，尝试从当前独立站项目的工程档案中继承
+    if (!cfg.webhookUrl && typeof window !== 'undefined' && window.projectManager) {
+      try {
+        const activeProj = window.projectManager.getActiveProject();
+        if (activeProj && activeProj.gsheetWebhook) {
+          cfg.webhookUrl = activeProj.gsheetWebhook;
+          cfg.autoSync = activeProj.gsheetAutoSync !== false;
+        }
+      } catch (e) {}
     }
+
+    // 3. 跨设备与跨版本自动恢复：通过 Chrome 账号云同步 (chrome.storage.sync) 异步回填
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
+      chrome.storage.sync.get([this.storageKey], (res) => {
+        if (res && res[this.storageKey] && res[this.storageKey].webhookUrl) {
+          if (!this.config.webhookUrl) {
+            this.config = { ...this.config, ...res[this.storageKey] };
+            try { localStorage.setItem(this.storageKey, JSON.stringify(this.config)); } catch (e) {}
+            const input = document.getElementById('input-gsheet-webhook');
+            const chk = document.getElementById('chk-gsheet-autosync');
+            if (input && !input.value) input.value = this.config.webhookUrl;
+            if (chk) chk.checked = Boolean(this.config.autoSync);
+            console.log('[GSheetsSync] 成功从 chrome.storage.sync 恢复 Google Sheets Webhook 配置！');
+          }
+        }
+      });
+    }
+
+    return cfg;
   }
 
   _loadRetryQueue() {
@@ -165,6 +197,25 @@ class GoogleSheetsSync {
     } catch (e) {
       console.warn('[GSheetsSync] 保存配置失败:', e);
     }
+
+    // 🌟 三重持久化：写入 chrome.storage.local 与 chrome.storage.sync (登录谷歌账号换机/重装扩展永不丢失)
+    if (typeof chrome !== 'undefined' && chrome.storage) {
+      try {
+        if (chrome.storage.local) chrome.storage.local.set({ [this.storageKey]: this.config });
+        if (chrome.storage.sync) chrome.storage.sync.set({ [this.storageKey]: this.config });
+      } catch (e) {}
+    }
+
+    // 同步至当前项目工程档案
+    if (typeof window !== 'undefined' && window.projectManager) {
+      try {
+        window.projectManager.updateActiveProject({
+          gsheetWebhook: this.config.webhookUrl,
+          gsheetAutoSync: this.config.autoSync
+        });
+      } catch (e) {}
+    }
+
     return this.config;
   }
 
