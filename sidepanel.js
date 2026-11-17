@@ -2989,6 +2989,143 @@ function renderDashboardUI(filter = 'all') {
   }).join('');
 }
 
+function initGoogleSheetsUI() {
+  if (!window.googleSheetsSync) return;
+
+  const btnToggleDrawer = document.getElementById('btn-toggle-gsheets-drawer');
+  const drawer = document.getElementById('gsheets-drawer');
+  const inputWebhook = document.getElementById('input-gsheet-webhook');
+  const chkAutoSync = document.getElementById('chk-gsheet-autosync');
+  const btnSaveConfig = document.getElementById('btn-save-gsheet-config');
+  const btnCopyScript = document.getElementById('btn-copy-apps-script');
+  const btnSyncProjectTab = document.getElementById('btn-sync-project-tab');
+  const btnSyncHistory = document.getElementById('btn-sync-gsheet-history');
+  const btnPullProbe = document.getElementById('btn-pull-probe-gsheet');
+
+  // 1. 回显已保存的配置
+  const config = window.googleSheetsSync.config;
+  if (inputWebhook && config.webhookUrl) {
+    inputWebhook.value = config.webhookUrl;
+  }
+  if (chkAutoSync) {
+    chkAutoSync.checked = Boolean(config.autoSync);
+  }
+
+  // 2. 展开 / 折叠抽屉
+  if (btnToggleDrawer && drawer) {
+    btnToggleDrawer.addEventListener('click', () => {
+      drawer.classList.toggle('hidden');
+    });
+  }
+
+  // 3. 复制代码
+  if (btnCopyScript) {
+    btnCopyScript.addEventListener('click', () => {
+      const code = window.googleSheetsSync.getAppsScriptCode();
+      navigator.clipboard.writeText(code).then(() => {
+        alert('📋 Google Apps Script 同步接收端脚本已成功复制到剪贴板！\n\n使用步骤：\n1. 打开您的谷歌表格，点击顶部菜单 [扩展程序] -> [Apps Script]；\n2. 将代码全部粘贴并覆盖 Code.gs，点击保存；\n3. 点击右上角 [部署] -> [新建部署]，选择 [Web 应用]；\n4. 将“谁可以访问”设置为“所有人 (Anyone)”并点击部署；\n5. 复制生成的 Web 应用网址 (以 https://script.google.com/macros/s/ 开头)，粘贴到本插件 Webhook 输入框中保存即可！');
+      }).catch(err => {
+        alert('复制失败，请手动复制代码: ' + err.message);
+      });
+    });
+  }
+
+  // 4. 保存配置
+  if (btnSaveConfig && inputWebhook) {
+    btnSaveConfig.addEventListener('click', () => {
+      const url = inputWebhook.value.trim();
+      const autoSync = chkAutoSync ? chkAutoSync.checked : false;
+
+      if (url && !url.startsWith('https://script.google.com')) {
+        alert('⚠️ Webhook URL 格式不正确，应以 https://script.google.com/macros/s/ 开头！');
+        return;
+      }
+
+      window.googleSheetsSync.saveConfig(url, autoSync);
+      alert('🎉 Google Sheets 谷歌表格 Webhook 配置已成功保存！\n' + (autoSync ? '已开启【自动云同步】功能。' : '当前为手动同步模式。'));
+    });
+  }
+
+  // 5. 自动在谷歌表格中为当前项目新建专属 Tab 页签
+  if (btnSyncProjectTab) {
+    btnSyncProjectTab.addEventListener('click', async () => {
+      if (!window.googleSheetsSync.isConfigured()) {
+        alert('请先填写并保存有效的 Google Sheet Webhook URL！');
+        if (drawer) drawer.classList.remove('hidden');
+        return;
+      }
+      btnSyncProjectTab.disabled = true;
+      btnSyncProjectTab.textContent = '⏳ 生成中...';
+      try {
+        const activeProj = window.projectManager ? window.projectManager.getActiveProject() : null;
+        const projName = activeProj ? (activeProj.name || activeProj.profileName) : '独立站项目';
+        const res = await window.googleSheetsSync.createProjectTab(projName);
+        alert(res.message || '已成功向 Google Sheet 发送生成项目页签指令！');
+      } catch (e) {
+        alert('生成项目页签失败: ' + e.message);
+      } finally {
+        btnSyncProjectTab.disabled = false;
+        btnSyncProjectTab.textContent = '🚀 生成项目页签';
+      }
+    });
+  }
+
+  // 6. 补发历史日志
+  if (btnSyncHistory) {
+    btnSyncHistory.addEventListener('click', async () => {
+      if (!window.googleSheetsSync.isConfigured()) {
+        alert('请先填写并保存有效的 Google Sheet Webhook URL！');
+        if (drawer) drawer.classList.remove('hidden');
+        return;
+      }
+      if (!window.publishLogger) return;
+
+      const logs = window.publishLogger.getLogs();
+      if (!logs.length) {
+        alert('当前本地暂无可同步的外链发布日志！');
+        return;
+      }
+
+      btnSyncHistory.disabled = true;
+      btnSyncHistory.textContent = '⏳ 同步中...';
+
+      try {
+        const res = await window.googleSheetsSync.syncBatch(logs, (curr, total) => {
+          btnSyncHistory.textContent = `⏳ ${curr}/${total}`;
+        });
+        alert(`🎉 历史日志补发完成！共 ${res.total} 条，成功推送 ${res.successCount} 条。`);
+      } catch (err) {
+        alert('批量同步失败: ' + err.message);
+      } finally {
+        btnSyncHistory.disabled = false;
+        btnSyncHistory.textContent = '📤 补发历史';
+      }
+    });
+  }
+
+  // 7. 拉取表格数据并检测存活
+  if (btnPullProbe) {
+    btnPullProbe.addEventListener('click', async () => {
+      if (!window.googleSheetsSync.isConfigured()) {
+        alert('请先填写并保存有效的 Google Sheet Webhook URL！');
+        if (drawer) drawer.classList.remove('hidden');
+        return;
+      }
+      btnPullProbe.disabled = true;
+      btnPullProbe.textContent = '⏳ 拉取中...';
+      try {
+        const rows = await window.googleSheetsSync.fetchLogEntriesFromSheet();
+        alert(`📥 成功从 Google Sheet 拉取到 ${rows.length} 条发布记录！`);
+      } catch (err) {
+        alert('拉取失败: ' + err.message);
+      } finally {
+        btnPullProbe.disabled = false;
+        btnPullProbe.textContent = '📥 拉取表格并检测存活';
+      }
+    });
+  }
+}
+
 // ==========================================
 // 6. 多项目隔离管理 UI
 // ==========================================
@@ -3331,6 +3468,7 @@ function bootstrapComLinkAI() {
   try { initBacklinkHelper(); } catch (e) { console.warn('[ComLinkAI] initBacklinkHelper 异常:', e); }
   try { initBatchWorkbench(); } catch (e) { console.warn('[ComLinkAI] initBatchWorkbench 异常:', e); }
   try { initAutoPilotEngineUI(); } catch (e) { console.warn('[ComLinkAI] initAutoPilotEngineUI 异常:', e); }
+  try { initGoogleSheetsUI(); } catch (e) { console.warn('[ComLinkAI] initGoogleSheetsUI 异常:', e); }
   try { initAISettingsUI(); } catch (e) { console.warn('[ComLinkAI] initAISettingsUI 异常:', e); }
   try { updateBatchUI(); } catch (e) { console.warn('[ComLinkAI] updateBatchUI 异常:', e); }
 
