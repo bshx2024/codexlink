@@ -12,6 +12,8 @@ const PORT = 3010;
 let isWorkerMode = false;
 let activeExtensionWs = null;
 const pendingRequests = new Map();
+let httpActionQueue = [];
+let lastHttpPollTime = 0;
 
 // 辅助函数：向 Master 进程发送 HTTP 请求
 function requestMaster(pathName, method = 'GET', postData = null) {
@@ -61,8 +63,9 @@ function requestMaster(pathName, method = 'GET', postData = null) {
 // 日志记录函数 - 所有非协议输出必须写入 stderr，以防破坏 MCP 的 stdout 协议流
 function log(msg, ...args) {
   const timestamp = new Date().toISOString();
-  console.error(`[${timestamp}] [CodexLink] ${msg}`, ...args);
+  console.error(`[${timestamp}] [ComLinkAI] ${msg}`, ...args);
 }
+
 
 // 动态读取并解析 Codex 配置文件 (.codex/config.toml) 与密钥 (.codex/auth.json)
 function getCodexConfig() {
@@ -348,6 +351,49 @@ tags:
     return;
   }
 
+  // 1.6 HTTP 轮询接口 (当 WebSocket 在指纹浏览器/代理环境中被阻断时的备用双通道)
+  if (req.url === '/api/poll' && req.method === 'GET') {
+    const now = Date.now();
+    if (!lastHttpPollTime || (now - lastHttpPollTime > 10000)) {
+      log('🚀 浏览器扩展已通过 HTTP 双通道成功建立连接！');
+    }
+    lastHttpPollTime = now;
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+    if (httpActionQueue.length > 0) {
+      const nextTask = httpActionQueue.shift();
+      res.end(JSON.stringify(nextTask));
+    } else {
+      res.end(JSON.stringify({ action: 'noop' }));
+    }
+    return;
+  }
+
+  if (req.url === '/api/poll-response' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk.toString(); });
+    req.on('end', () => {
+      try {
+        const { id, data, error } = JSON.parse(body);
+        if (id && pendingRequests.has(id)) {
+          const { resolve, reject, timeout } = pendingRequests.get(id);
+          clearTimeout(timeout);
+          pendingRequests.delete(id);
+          if (error) {
+            reject(new Error(error));
+          } else {
+            resolve(data);
+          }
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ success: true }));
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
   // 404
   res.writeHead(404);
   res.end('Not Found');
@@ -365,6 +411,11 @@ wss.on('connection', (ws, request) => {
   ws.on('message', (message) => {
     try {
       const payload = JSON.parse(message.toString());
+      if (payload && payload.type === 'ping') {
+        ws.send(JSON.stringify({ type: 'pong' }));
+        return;
+      }
+
       const { id, type, data, error } = payload;
 
       // 匹配之前发送的异步请求
@@ -378,7 +429,7 @@ wss.on('connection', (ws, request) => {
         } else {
           resolve(data);
         }
-      } else {
+      } else if (payload.type !== 'pong') {
         log('收到未匹配或主动推送的消息:', payload);
       }
     } catch (err) {
@@ -417,8 +468,10 @@ function callExtensionAction(action, data = {}) {
       return;
     }
 
-    // Master 模式的逻辑：通过 WebSocket 发送给插件
-    if (!activeExtensionWs || activeExtensionWs.readyState !== 1) {
+    const hasWs = activeExtensionWs && activeExtensionWs.readyState === 1;
+    const hasHttpPoll = (Date.now() - lastHttpPollTime) < 10000;
+
+    if (!hasWs && !hasHttpPoll) {
       return reject(new Error('浏览器插件未连接，请先在 Chrome 中激活 CodexLink 插件并打开侧边栏！'));
     }
 
@@ -440,7 +493,11 @@ function callExtensionAction(action, data = {}) {
       data: data
     };
 
-    activeExtensionWs.send(JSON.stringify(requestPayload));
+    if (hasWs) {
+      activeExtensionWs.send(JSON.stringify(requestPayload));
+    } else {
+      httpActionQueue.push(requestPayload);
+    }
   });
 }
 
@@ -471,7 +528,8 @@ function handleMcpRequest(req) {
     sendMcpResponse(id, {
       protocolVersion: '2024-11-05',
       capabilities: {
-        tools: {}
+        tools: {},
+        resources: {}
       },
       serverInfo: {
         name: 'codex-link-server',
@@ -620,6 +678,112 @@ function handleMcpRequest(req) {
     return;
   }
 
+  // 4.4.1 resources/list - 声明可用资源列表
+  if (method === 'resources/list') {
+    callExtensionAction('listTabs')
+      .then(tabs => {
+        const resources = [
+          {
+            uri: 'codex-link://tabs',
+            name: '浏览器打开的标签页列表',
+            description: '当前浏览器中所有打开的标签页（包括标题与 URL）',
+            mimeType: 'text/markdown'
+          }
+        ];
+        if (Array.isArray(tabs)) {
+          tabs.forEach(t => {
+            if (t.url && !t.url.startsWith('chrome://') && !t.url.startsWith('chrome-extension://') && !t.url.startsWith('edge://') && !t.url.startsWith('about:')) {
+              resources.push({
+                uri: `codex-link://tabs/${t.id}`,
+                name: t.title || '无标题网页',
+                description: `网页内容: ${t.url}`,
+                mimeType: 'text/markdown'
+              });
+            }
+          });
+        }
+        sendMcpResponse(id, { resources });
+      })
+      .catch(err => {
+        sendMcpResponse(id, {
+          resources: [
+            {
+              uri: 'codex-link://tabs',
+              name: '浏览器打开的标签页列表',
+              description: '当前浏览器中所有打开的标签页（包括标题与 URL）',
+              mimeType: 'text/markdown'
+            }
+          ]
+        });
+      });
+    return;
+  }
+
+  // 4.4.2 resources/read - 读取指定资源
+  if (method === 'resources/read') {
+    const uri = params?.uri;
+    if (uri === 'codex-link://tabs') {
+      callExtensionAction('listTabs')
+        .then(tabs => {
+          let text = '# 浏览器打开的标签页列表\n\n';
+          if (Array.isArray(tabs) && tabs.length > 0) {
+            text += '| 标签页 ID | 标题 | URL | 状态 |\n';
+            text += '| --- | --- | --- | --- |\n';
+            tabs.forEach(t => {
+              text += `| ${t.id} | ${t.title || '无标题'} | ${t.url || ''} | ${t.active ? '当前活动' : '后台'} |\n`;
+            });
+          } else {
+            text += '当前没有打开的标签页，或者插件未连接。';
+          }
+          sendMcpResponse(id, {
+            contents: [
+              {
+                uri,
+                mimeType: 'text/markdown',
+                text
+              }
+            ]
+          });
+        })
+        .catch(err => {
+          sendMcpError(id, -32603, `读取标签页列表失败: ${err.message}`);
+        });
+    } else if (uri && uri.startsWith('codex-link://tabs/')) {
+      const tabIdStr = uri.replace('codex-link://tabs/', '');
+      const tabId = parseInt(tabIdStr, 10);
+      if (isNaN(tabId)) {
+        sendMcpError(id, -32602, `无效的标签页 ID: ${tabIdStr}`);
+        return;
+      }
+      callExtensionAction('getTabContent', { tabId })
+        .then(pageData => {
+          const markdownContent = `
+# 标题: ${pageData.title}
+URL: ${pageData.url}
+字数估算: ${pageData.length || 0} 字
+
+---
+${pageData.content}
+`;
+          sendMcpResponse(id, {
+            contents: [
+              {
+                uri,
+                mimeType: 'text/markdown',
+                text: markdownContent.trim()
+              }
+            ]
+          });
+        })
+        .catch(err => {
+          sendMcpError(id, -32603, `读取标签页内容失败: ${err.message}`);
+        });
+    } else {
+      sendMcpError(id, -32602, `Unknown resource URI: ${uri}`);
+    }
+    return;
+  }
+
   // 4.5 ping - 客户端保活
   if (method === 'ping') {
     sendMcpResponse(id, {});
@@ -754,14 +918,19 @@ async function handleBrowserScrollTool(requestId, direction, amount = 400) {
 
 async function handleBrowserScreenshotTool(requestId) {
   try {
-    log('收到 MCP 工具调用 browser_screenshot...');
+    log('收到 MCP 工具调用 browser_screenshot (CDP 原生硬件加速缩放)...');
     const res = await callExtensionAction('screenshot');
     if (!res || !res.dataUrl) throw new Error('截图数据为空');
-    const b64 = res.dataUrl.replace(/^data:image\/png;base64,/, '');
+    
+    // 动态提取正确的 MIME 类型与纯 base64 数据
+    const match = res.dataUrl.match(/^data:(image\/[a-zA-Z]+);base64,(.+)$/);
+    const mimeType = match ? match[1] : 'image/jpeg';
+    const b64 = match ? match[2] : res.dataUrl.replace(/^data:[^;]+;base64,/, '');
+
     sendMcpResponse(requestId, {
       content: [
-        { type: 'image', data: b64, mimeType: 'image/png' },
-        { type: 'text', text: '[截图成功]: 已成功获取当前页面可见区域截图。' }
+        { type: 'image', data: b64, mimeType: mimeType },
+        { type: 'text', text: `[截图成功]: 已通过 CDP DevTools 协议获取按比例硬件缩放截图 (${res.width || '自适应'}x${res.height || '自适应'})。` }
       ],
       isError: false
     });
@@ -886,8 +1055,8 @@ function startMasterServer() {
   });
 
   // 启动端口监听
-  httpServer.listen(PORT, () => {
-    log(`HTTP 和 WebSocket 服务正在端口 ${PORT} 监听中...`);
+  httpServer.listen(PORT, '0.0.0.0', () => {
+    log(`HTTP 和 WebSocket 服务正在端口 ${PORT} (0.0.0.0) 监听中...`);
   });
 }
 

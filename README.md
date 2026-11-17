@@ -1,45 +1,41 @@
-﻿# CodexLink 🔗
+# ComLinkAI 🔗
 
-> **最懂极客与研究者的本地优先、大模型解耦型万能网页剪藏器 & AI 网页伴侣。**
-> Ultimate Web Clipper & AI Copilot for Obsidian / Logseq / AI Agents.
+> **最懂极客、研究者与 SEO 站长的本地优先、大模型解耦型 AI 网页伴侣、博客评论反链助手 & 网页剪藏器。**
+> Ultimate AI Web Copilot, Blog Comment Backlink Automation & Clipper.
 
-CodexLink 是一款开源、本地优先（Local-First）的高保真网页剪藏插件与 AI 伴侣工具。它不仅能将网页完美过滤并保存至您的 Obsidian 或 Logseq 本地库，还内置了强大的 WebSocket 中转协议，支持 Cursor, Claude Desktop, Antigravity 等 AI 智能代理（AI Agent）跨进程操控您的真实浏览器。
+ComLinkAI 是一款开源、本地优先（Local-First）的高保真网页剪藏插件、AI 浏览器自动化中转与博客反链智能助手。它不仅能将网页完美过滤并保存至您的 Obsidian 或 Logseq 本地库，内置了 WebSocket 中转协议支持 AI 智能代理操控真实浏览器，还全新集成了**博客评论反链自动填充与 AI 人工审核提交**功能。
 
 ---
 
 ## 🌟 核心特色功能 (Key Features)
 
-### 1. 🤖 AI Agent 浏览器原生操控桥梁 (AI Browser Automation Bridge)
-这是 CodexLink 最具技术特色的功能。它充当了 AI 智能代理与您真实浏览器之间的“神经通道”：
-*   **指令化操控**：AI 代理（如 Cursor、Antigravity、Claude Desktop 等）可以通过本地桥接服务发送标准化指令，由插件在当前活动网页中静默或模拟执行：
+### 1. 💬 博客评论反链自动填充与 AI 人工审核助手 (Blog Comment Backlink Helper)
+这是 ComLinkAI v2.0 的核心亮点功能，专为 SEO 优化、站长外链建设与技术博客互动设计：
+*   **智能正文阅读与分析**：一键深入分析当前博客文章的核心论点、亮点与具体讨论点。
+*   **高留存率建设性评论**：AI 结合文章细节与您的个人 Profile（姓名、邮箱、目标引流网址、网站定位）撰写 80-160 字极具专业度与深度建设性的见解评论，杜绝干瘪垃圾评论，极易通过博主与 Akismet 审核。
+*   **通用表单 DOM 自动感知**：自动探测定位 WordPress、Ghost、Typecho、Hexo 等常见博客系统的 `Name`、`Email`、`Website` 和 `Comment` 字段。
+*   **Human-in-the-Loop 人工审核提交**：生成的评论在侧边栏可实时润色修改，提供“仅填入表单”与“一键自动提交”按钮，轻松应对 CAPTCHA 验证码。
+*   **反链历史追踪**：自动记录成功发表过的留言、网址与时间戳。
+
+### 2. 🤖 AI Agent 浏览器原生操控桥梁 (AI Browser Automation Bridge)
+它充当了 AI 智能代理与您真实浏览器之间的“神经通道”：
+*   **指令化操控**：AI 代理（如 Antigravity、Cursor、Claude Desktop 等）可以通过本地桥接服务发送标准化指令，由插件在当前活动网页中静默或模拟执行：
     *   `navigate`：控制浏览器静默跳转至任意 URL。
     *   `getActiveTab`：获取当前网页的结构化 Markdown/DOM 内容。
     *   `click` / `type`：模拟真实用户点击页面元素、输入框文本键入。
     *   `scroll` / `keypress`：控制页面滚动、发送键盘按键事件。
     *   `screenshot`：对当前标签页进行高分辨率无缝截图并返回给 AI。
-    *   `waitForElement` / `getElements`：侦测页面动态加载 of DOM 节点并提取所有可交互元素。
-*   **应用场景**：这使得 AI 能够像人类一样上网浏览信息、填写表单、登录账号、检索专业数据库并提取知识，实现完全自主的自动化网页任务。
+    *   `waitForElement` / `getElements`：侦测页面动态加载 DOM 节点并提取所有可交互元素。
 
-### 2. 💾 灵活双运行模式 (Dual-Mode Flexibility)
-为了同时兼顾“极客开发操控”与“普通用户零门槛剪藏”，CodexLink 首创了双运行模式：
-*   **💾 浏览器直写模式 (Standalone Mode)**：**完全脱离对本地 Node.js 服务的依赖**。利用现代浏览器原生的 **File System Access API** 获得用户 Obsidian 库目录 of 授权，直接由插件将 Markdown 和图片附件离线安全地写入本地磁盘。
-*   **🔗 中转桥接模式 (Bridge Mode)**：插件通过 WebSocket 建立与本地 `ws://localhost:3010` 服务的长连接，全面激活上述的 AI 浏览器自动化操控能力。
+### 3. 💾 灵活双运行模式 (Dual-Mode Flexibility)
+*   **💾 浏览器直写模式 (Standalone Mode)**：利用现代浏览器原生的 **File System Access API** 直接将 Markdown 和图片附件离线安全地写入 Obsidian 本地磁盘。
+*   **🔗 中转桥接模式 (Bridge Mode)**：插件通过 WebSocket 建立与本地 `ws://localhost:3010` 服务的长连接，全面激活 AI 浏览器自动化操控能力。
 
-### 3. 🖼️ 本地图片自动下载重链 (Active-Session Image Localizer)
-*   **痛点**：传统剪存器复制网页后容易因为防盗链（如微信、知乎）或原站封禁而导致笔记中图片失效。
-*   **解法**：CodexLink 在插件前端利用浏览器的活动 Session（携带 Cookie 与登录状态）自动下载所有网页图片资产，保存至您的 Obsidian `attachments/${note_title}_assets/` 文件夹下，并将 Markdown 里的外部图片 URL 自动重写为本地相对路径，确保离线资料永久有效。
+### 4. 🖼️ 本地图片自动下载重链 (Active-Session Image Localizer)
+*   在插件前端利用浏览器的活动 Session 自动下载所有网页图片资产，保存至 Obsidian 库，并将外部图片 URL 重写为本地相对路径，确保离线资料永久有效。
 
-### 4. 💻 代码块提纯纯净化与语言检测 (Clean Code Blocks)
-*   **痛点**：从技术博客剪存代码时，高亮渲染带入的垃圾 HTML `<span>` 标签会彻底破坏 Markdown 代码块的格式，且经常丢失语言标记。
-*   **解法**：内置了代码节点提纯算法，自动剥离所有无用 `<span>` 格式标签，智能识别父级 CSS 提取编程语言名称（如 `javascript`、`python`），生成最干净的 ``` 格式块。
-
-### 5. 📝 Logseq 大纲列表一键转换 (Outliner Exporter)
-*   **痛点**：Logseq 等大纲软件只支持列表层级结构，直接导入标准 Markdown 标题会导致排版散乱。
-*   **解法**：在侧边栏开启“以大纲列表模式导出”后，大纲转换引擎会自动将 H1/H2 标题与正文段落重塑为带嵌套缩进层级的无序列表（`- `），完美适配 Logseq / Roam Research 等子弹笔记生态。
-
-### 6. 🧠 大模型解耦与自带 Key 自由 (Model-Agnostic BYOK)
-*   **痛点**：市面上的 AI 剪藏插件大多强制收取月度订阅费或绑定单一云端模型。
-*   **解法**：CodexLink 彻底解耦 AI 供应锁定。您可以在插件设置面板中自由配置您的 `API Base URL`、`Model Name` 和 `API Key`，直接使用您自己极低成本的 **DeepSeek R1/V3**、**OpenRouter** 密钥或本地运行的免费 **Ollama** 模型。
+### 5. 🧠 大模型解耦与自带 Key 自由 (Model-Agnostic BYOK)
+*   您可以在插件设置面板中自由配置您的 `API Base URL`、`Model Name` 和 `API Key`，直接使用您自己极低成本的 **DeepSeek R1/V3**、**OpenRouter** 密钥或本地运行的免费 **Ollama** 模型。
 
 ---
 

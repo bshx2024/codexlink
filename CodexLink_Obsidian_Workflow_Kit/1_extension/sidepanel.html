@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>CodexLink Sidepanel</title>
+  <title>ComLinkAI Sidepanel</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Outfit:wght@500;600;700&display=swap" rel="stylesheet">
@@ -10,165 +10,788 @@
 </head>
 <body>
   <div class="app-container">
+    <div id="global-error-banner" style="display:none; background: #ef4444; color: #fff; padding: 6px 10px; font-size: 0.72rem; border-radius: 6px; margin-bottom: 8px; z-index: 10000; word-break: break-all;"></div>
     <!-- Header -->
     <header class="app-header">
       <div class="logo-area">
         <span class="logo-icon">🔗</span>
-        <span class="logo-text">Codex<span class="highlight">Link</span></span>
+        <span class="logo-text">Com<span class="highlight">LinkAI</span></span>
       </div>
-      <div id="connection-badge" class="badge badge-disconnected">
-        <span class="dot"></span>
-        <span class="badge-text">未连接</span>
+      <div style="display: flex; align-items: center; gap: 6px;">
+        <select id="sel-active-project" title="选择当前活跃独立站项目" style="background: hsla(220, 30%, 5%, 0.9); border: 1px solid hsla(217, 32%, 22%, 0.8); color: var(--text-main); font-size: 0.74rem; padding: 4px 6px; border-radius: 6px; outline: none; cursor: pointer; max-width: 130px; text-overflow: ellipsis;"></select>
+        <button id="btn-add-project" class="btn btn-secondary" title="新建独立站项目" style="padding: 4px 7px; font-size: 0.72rem;">➕</button>
+        <div id="connection-badge" class="badge badge-disconnected" title="点击立即重新连接本地中转服务" style="padding: 4px 8px; cursor: pointer;">
+          <span class="dot"></span>
+          <span class="badge-text">未连接</span>
+        </div>
+
       </div>
     </header>
 
+    <!-- 新建独立站项目 模态弹窗 -->
+    <div id="modal-create-project" class="modal-overlay hidden">
+      <div style="background: hsla(224, 71%, 6%, 0.95); border: 1px solid hsla(217, 32%, 22%, 0.8); border-radius: 12px; width: 90%; max-width: 320px; padding: 14px; box-shadow: 0 10px 30px rgba(0,0,0,0.8);">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+          <h4 style="margin: 0; font-size: 0.88rem; color: var(--text-main); font-family: var(--font-heading);">🌐 新建独立站项目工作区</h4>
+          <button id="btn-close-project-modal" style="background: none; border: none; color: var(--text-muted); font-size: 1.1rem; cursor: pointer;">✕</button>
+        </div>
+        <div class="input-group" style="margin-bottom: 8px;">
+          <label style="font-size: 0.72rem; color: var(--text-muted);">项目名称 (Project Name)</label>
+          <input type="text" id="new-proj-name" placeholder="例: Sprunki Game 游戏站" style="width: 100%; box-sizing: border-box; background: hsla(220, 30%, 5%, 0.8); border: 1px solid hsla(217, 32%, 22%, 0.8); color: var(--text-main); font-size: 0.76rem; padding: 5px 8px; border-radius: 6px;">
+        </div>
+        <div class="input-group" style="margin-bottom: 8px;">
+          <label style="font-size: 0.72rem; color: var(--text-muted);">目标引流网址 (Website URL)</label>
+          <div style="display: flex; gap: 6px;">
+            <input type="url" id="new-proj-url" placeholder="例: https://sprunki-game.io/" style="flex: 1; box-sizing: border-box; background: hsla(220, 30%, 5%, 0.8); border: 1px solid hsla(217, 32%, 22%, 0.8); color: var(--text-main); font-size: 0.76rem; padding: 5px 8px; border-radius: 6px;">
+            <button id="btn-extract-homepage-profile" class="btn btn-secondary" type="button" style="padding: 4px 8px; font-size: 0.7rem; color: #00f2fe; border-color: rgba(0,242,254,0.4); flex-shrink: 0;" title="智能抓取目标主页并自动填充下方的 7 大产品档案信息">
+              🪄 智能提取
+            </button>
+          </div>
+        </div>
+        <div class="input-group" style="margin-bottom: 8px;">
+          <label style="font-size: 0.72rem; color: var(--text-muted);">留言/产品名称 (Profile Name)</label>
+          <input type="text" id="new-proj-profile-name" placeholder="例: Sprunki Game" style="width: 100%; box-sizing: border-box; background: hsla(220, 30%, 5%, 0.8); border: 1px solid hsla(217, 32%, 22%, 0.8); color: var(--text-main); font-size: 0.76rem; padding: 5px 8px; border-radius: 6px;">
+        </div>
+        <div class="input-group" style="margin-bottom: 12px;">
+          <label style="font-size: 0.72rem; color: var(--text-muted);">网站/产品定位介绍 (Niche Bio)</label>
+          <input type="text" id="new-proj-profile-bio" placeholder="例: 轻松好玩的音乐小游戏玩家社区" style="width: 100%; box-sizing: border-box; background: hsla(220, 30%, 5%, 0.8); border: 1px solid hsla(217, 32%, 22%, 0.8); color: var(--text-main); font-size: 0.76rem; padding: 5px 8px; border-radius: 6px;">
+        </div>
+        <button id="btn-submit-create-project" class="btn btn-primary" style="width: 100%; justify-content: center; padding: 7px; font-size: 0.78rem;">🚀 创建并同步谷歌表格页签</button>
+      </div>
+    </div>
+
+    <!-- 第三方大模型配置 模态弹窗 -->
+    <div id="modal-ai-settings" class="modal-overlay hidden">
+      <div style="background: hsla(224, 71%, 6%, 0.95); border: 1px solid hsla(217, 32%, 22%, 0.8); border-radius: 12px; width: 90%; max-width: 340px; padding: 14px; box-shadow: 0 10px 30px rgba(0,0,0,0.8);">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+          <h4 style="margin: 0; font-size: 0.88rem; color: var(--text-main); font-family: var(--font-heading);">⚙️ 第三方大模型接口配置</h4>
+          <button id="btn-close-ai-settings" style="background: none; border: none; color: var(--text-muted); font-size: 1.1rem; cursor: pointer;">✕</button>
+        </div>
+
+        <div class="input-group" style="margin-bottom: 8px;">
+          <label style="font-size: 0.72rem; color: var(--text-muted);">快速预设 (Provider Preset)</label>
+          <select id="ai-preset-select" style="width: 100%; box-sizing: border-box; background: hsla(220, 30%, 5%, 0.8); border: 1px solid hsla(217, 32%, 22%, 0.8); color: #00f2fe; font-size: 0.76rem; padding: 5px 8px; border-radius: 6px; outline: none; cursor: pointer;">
+            <option value="apivale">Apivale (apivale.com 官方网关)</option>
+            <option value="deepseek">DeepSeek (推荐: deepseek-chat)</option>
+            <option value="openai">OpenAI (gpt-4o-mini / gpt-4o)</option>
+            <option value="gemini">Google Gemini (gemini-1.5-flash)</option>
+            <option value="qwen">阿里通义千问 (qwen-plus)</option>
+            <option value="glm">智谱清言 (glm-4-flash)</option>
+            <option value="kimi">Moonshot Kimi (moonshot-v1-8k)</option>
+            <option value="custom">自定义 OpenAI 兼容接口 (Custom)</option>
+          </select>
+        </div>
+
+        <div class="input-group" style="margin-bottom: 8px;">
+          <label style="font-size: 0.72rem; color: var(--text-muted);">API 接口地址 (Base URL)</label>
+          <input type="text" id="ai-base-url" placeholder="https://api.deepseek.com/v1" style="width: 100%; box-sizing: border-box; background: hsla(220, 30%, 5%, 0.8); border: 1px solid hsla(217, 32%, 22%, 0.8); color: var(--text-main); font-size: 0.76rem; padding: 5px 8px; border-radius: 6px;">
+        </div>
+
+        <div class="input-group" style="margin-bottom: 8px;">
+          <label style="font-size: 0.72rem; color: var(--text-muted);">API 密钥 (API Key)</label>
+          <div style="display: flex; gap: 6px;">
+            <input type="password" id="ai-api-key" placeholder="sk-xxxxxxxxxxxxxxxx" style="flex: 1; box-sizing: border-box; background: hsla(220, 30%, 5%, 0.8); border: 1px solid hsla(217, 32%, 22%, 0.8); color: var(--text-main); font-size: 0.76rem; padding: 5px 8px; border-radius: 6px;">
+            <button id="btn-toggle-key-visibility" class="btn btn-secondary" type="button" style="padding: 3px 6px; font-size: 0.7rem; flex-shrink: 0;" title="显示/隐藏密钥">👁️</button>
+          </div>
+        </div>
+
+        <div class="input-group" style="margin-bottom: 12px;">
+          <label style="font-size: 0.72rem; color: var(--text-muted);">模型名称 (Model Name)</label>
+          <input type="text" id="ai-model-name" placeholder="deepseek-chat" style="width: 100%; box-sizing: border-box; background: hsla(220, 30%, 5%, 0.8); border: 1px solid hsla(217, 32%, 22%, 0.8); color: var(--text-main); font-size: 0.76rem; padding: 5px 8px; border-radius: 6px;">
+        </div>
+
+        <div style="display: flex; gap: 8px;">
+          <button id="btn-test-ai-connection" class="btn btn-secondary" style="flex: 1; justify-content: center; padding: 6px; font-size: 0.74rem;">⚡ 测试连通性</button>
+          <button id="btn-save-ai-settings" class="btn btn-primary" style="flex: 1.2; justify-content: center; padding: 6px; font-size: 0.74rem;">💾 保存配置</button>
+        </div>
+        <div id="ai-test-result" style="margin-top: 8px; font-size: 0.72rem; text-align: center; display: none;"></div>
+      </div>
+    </div>
+
+
+    <!-- Top Workspace Tabs -->
+    <nav class="workspace-tabs">
+      <button id="tab-btn-outreach" class="tab-nav-btn active" data-target="panel-outreach">
+        <span>🚀 外链批处理 & 评论</span>
+      </button>
+      <button id="tab-btn-markdown" class="tab-nav-btn" data-target="panel-markdown">
+        <span>📄 Markdown 剪存</span>
+      </button>
+      <button id="tab-btn-chat" class="tab-nav-btn" data-target="panel-chat">
+        <span>💬 网页伴侣 AI</span>
+      </button>
+    </nav>
+
     <!-- Content Area -->
     <main class="app-main">
-      <!-- Status Card -->
-      <section class="card status-card">
-        <div class="card-header">
-          <h3>桥接服务状态</h3>
-        </div>
-        <div class="card-content">
-          <p id="status-desc">本地服务正在连接到 <code>ws://localhost:3010</code>...</p>
-          <div class="progress-bar-container">
-            <div id="status-progress" class="progress-bar progress-bar-disconnected"></div>
-          </div>
-          <!-- 开机自启静默运行配置指引 -->
-          <div id="startup-guide-trigger" class="startup-guide-trigger hidden">
-            <span>💡 想要开机自动秒连？点击查看</span>
-          </div>
-          <div id="startup-guide-content" class="startup-guide-content hidden">
-            <p>由于浏览器安全限制，插件无法直接帮您启动本地服务。但您可一键配置开机后台静默自启：</p>
-            <ol>
-              <li>在工作区下，右键点击 <code>install-startup.ps1</code> 脚本</li>
-              <li>选择 <strong>“使用 PowerShell 运行”</strong></li>
-              <li>按提示完成一次性配置。未来开机时，服务将完全静默在后台运行，永不弹框，打开插件即连！</li>
-            </ol>
-          </div>
-        </div>
-      </section>
-
-      <!-- Active Tab Panel -->
-      <section class="card tab-card">
-        <div class="card-header">
-          <h3>当前活跃标签页</h3>
-          <button id="btn-refresh" class="btn btn-secondary" title="刷新页面预览">
-            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+      
+      <!-- Panel 1: Outreach & Comment Workbench (默认激活主工作台) -->
+      <div id="panel-outreach" class="tab-panel">
+        
+        <!-- 4 Sub-tab Navigation (收集, 发布, 外链推荐, 存活看板) -->
+        <div class="sub-tab-nav" style="display: flex; background: hsla(220, 30%, 6%, 0.8); border: 1px solid hsla(217, 32%, 18%, 0.8); border-radius: 8px; padding: 3px; margin-bottom: 10px; gap: 2px;">
+          <button class="sub-tab-btn active" data-subtarget="subpanel-collect" style="flex: 1; padding: 6px 2px; border: none; background: transparent; color: var(--text-main); font-size: 0.76rem; font-weight: 600; cursor: pointer; border-radius: 6px; transition: all 0.2s;">
+            🔍 收集
+          </button>
+          <button class="sub-tab-btn" data-subtarget="subpanel-publish" style="flex: 1; padding: 6px 2px; border: none; background: transparent; color: var(--text-muted); font-size: 0.76rem; font-weight: 600; cursor: pointer; border-radius: 6px; transition: all 0.2s;">
+            🚀 发布
+          </button>
+          <button class="sub-tab-btn" data-subtarget="subpanel-directory" style="flex: 1; padding: 6px 2px; border: none; background: transparent; color: var(--text-muted); font-size: 0.76rem; font-weight: 600; cursor: pointer; border-radius: 6px; transition: all 0.2s;">
+            📍 外链推荐
+          </button>
+          <button class="sub-tab-btn" data-subtarget="subpanel-dashboard" style="flex: 1; padding: 6px 2px; border: none; background: transparent; color: var(--text-muted); font-size: 0.76rem; font-weight: 600; cursor: pointer; border-radius: 6px; transition: all 0.2s;">
+            📊 存活看板
           </button>
         </div>
-        <div class="card-content">
-          <div class="tab-info">
-            <div class="tab-title-row">
-              <span class="tab-icon">📄</span>
-              <span id="tab-title" class="tab-title">加载中...</span>
-            </div>
-            <div class="tab-url-row">
-              <span id="tab-url" class="tab-url">waiting for tab...</span>
-            </div>
-          </div>
-          
-          <div class="btn-group">
-            <button id="btn-fetch" class="btn btn-primary">
-              <span>提取并预览网页 Markdown</span>
-            </button>
-          </div>
-        </div>
-      </section>
 
-      <!-- Markdown Preview -->
-      <section class="card preview-card">
-        <div class="card-header">
-          <h3>AI 视角 (内容预览)</h3>
-          <span id="char-count" class="char-count">0 字</span>
-        </div>
-        <div class="card-content">
-          <div id="markdown-placeholder" class="placeholder-text">
-            点击上方按钮，即可在本地预览将提供给 Codex/PilotDeck 的 Markdown 排版文本。
-          </div>
-          <pre id="markdown-preview" class="markdown-preview-area hidden"></pre>
-          
-          <!-- Obsidian Clipping Actions -->
-          <div id="obsidian-actions" class="obsidian-actions hidden">
-            <button id="btn-save-obsidian" class="btn btn-obsidian">
-              <span class="btn-icon">💾</span>
-              <span>一键剪存至 Obsidian</span>
-            </button>
-            <button id="btn-ai-save-obsidian" class="btn btn-obsidian-ai">
-              <span class="btn-icon">✨</span>
-              <span>AI 摘要并剪存</span>
-            </button>
-          </div>
-        </div>
-      </section>
+        <!-- Subpanel 1: 收集 (Collect) -->
+        <div id="subpanel-collect" class="sub-panel">
+          <section class="card collect-card" style="margin-bottom: 10px;">
+            <div class="card-header" style="padding: 8px 12px;">
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <span style="font-size: 1.05rem;">🌐</span>
+                <h3>外链抓取与自动分析</h3>
+              </div>
+            </div>
+            <div class="card-content" style="padding: 10px 12px;">
+              <!-- 目标域名/搜索词输入框 -->
+              <div class="input-group" style="margin-bottom: 8px;">
+                <label style="font-size: 0.74rem; color: var(--text-muted);">目标域名 / 关键词指令</label>
+                <div style="display: flex; gap: 6px;">
+                  <input type="text" id="input-target-domain" placeholder="例: sprunki-game.io 或 OpenAI API" style="flex: 1; background: hsla(220, 30%, 5%, 0.8); border: 1px solid hsla(217, 32%, 22%, 0.8); color: var(--text-main); font-size: 0.76rem; padding: 5px 8px; border-radius: 6px;">
+                  <button id="btn-collect-toggle" class="btn btn-primary" style="padding: 5px 12px; font-size: 0.76rem; flex-shrink: 0;">开始收集</button>
+                </div>
+              </div>
 
-      <!-- AI Copilot Chat -->
-      <section class="card chat-card">
-        <div class="card-header">
-          <h3>Codex 网页伴侣 (Codex Web Copilot)</h3>
-          <button id="btn-toggle-settings" class="btn btn-secondary" title="配置 AI 模型接口" style="padding: 6px; display: flex; align-items: center; justify-content: center; border-radius: 6px;">
-            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-          </button>
+              <!-- 导入与抓取操作按钮行 -->
+              <div class="batch-import-row" style="display: flex; gap: 6px; margin-bottom: 10px;">
+                <label for="input-csv-file" class="btn btn-secondary" style="flex: 1.4; text-align: center; cursor: pointer; padding: 5px 6px; font-size: 0.74rem; border-radius: 6px;" title="支持导入 Semrush/Ahrefs Backlinks.xlsx 或 CSV 表格文件">
+                  📁 导入 CSV / XLSX
+                </label>
+                <input type="file" id="input-csv-file" accept=".csv,.xlsx,.xls,.txt" style="display: none;">
+                <button id="btn-scrape-google" class="btn btn-secondary" style="flex: 1.5; padding: 5px 6px; font-size: 0.74rem; background: linear-gradient(135deg, rgba(0,242,254,0.15), rgba(79,172,254,0.15)); border: 1px solid #00f2fe; color: #00f2fe; border-radius: 6px;" title="一键提取当前 Google 搜索结果的前10条优质外链入库">
+                  🔍 抓取当页10条
+                </button>
+                <button id="btn-clear-queue" class="btn btn-secondary" style="padding: 5px 8px; font-size: 0.74rem;" title="清空收集队列">
+                  🗑️ 清空
+                </button>
+              </div>
+
+              <!-- 4 大漏斗指标仪表盘看板 -->
+              <div class="funnel-dashboard-card" style="background: linear-gradient(135deg, hsla(220, 30%, 8%, 0.9), hsla(220, 30%, 5%, 0.95)); border: 1px solid hsla(217, 32%, 22%, 0.8); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px;">
+                <div class="status-indicator-row" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                  <span style="font-size: 0.74rem; color: var(--text-muted); display: flex; align-items: center; gap: 6px;">
+                    <span id="collect-status-dot" class="status-indicator-dot" style="width: 8px; height: 8px; border-radius: 50%; background: #10b981; display: inline-block;"></span>
+                    <span id="collect-status-text">就绪：等待抓取或导入外链...</span>
+                  </span>
+                </div>
+                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; text-align: center;">
+                  <div class="metric-box" style="background: hsla(220, 30%, 6%, 0.6); padding: 6px 4px; border-radius: 6px; border: 1px solid hsla(217, 32%, 18%, 0.6);">
+                    <div id="stat-discovered" style="font-size: 1.25rem; font-weight: 700; color: #60a5fa;">0</div>
+                    <div style="font-size: 0.68rem; color: var(--text-muted);">已发现外链</div>
+                  </div>
+                  <div class="metric-box" style="background: hsla(220, 30%, 6%, 0.6); padding: 6px 4px; border-radius: 6px; border: 1px solid hsla(217, 32%, 18%, 0.6);">
+                    <div id="stat-analyzed" style="font-size: 1.25rem; font-weight: 700; color: #38bdf8;">0</div>
+                    <div style="font-size: 0.68rem; color: var(--text-muted);">已分析</div>
+                  </div>
+                  <div class="metric-box" style="background: hsla(220, 30%, 6%, 0.6); padding: 6px 4px; border-radius: 6px; border: 1px solid hsla(217, 32%, 18%, 0.6);">
+                    <div id="stat-commentable" style="font-size: 1.25rem; font-weight: 700; color: #34d399;">0</div>
+                    <div style="font-size: 0.68rem; color: var(--text-muted);">有效外链资源</div>
+                  </div>
+                  <div class="metric-box" style="background: hsla(220, 30%, 6%, 0.6); padding: 6px 4px; border-radius: 6px; border: 1px solid hsla(217, 32%, 18%, 0.6);">
+                    <div id="stat-in-queue" style="font-size: 1.25rem; font-weight: 700; color: #f87171;">0</div>
+                    <div style="font-size: 0.68rem; color: var(--text-muted);">毒性隔离</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 收集队列浏览列表容器 -->
+              <div id="collect-queue-container" style="max-height: 180px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px;">
+                <div id="collect-queue-empty" style="text-align: center; padding: 15px; color: var(--text-muted); font-size: 0.76rem;">
+                  暂无收集外链。输入目标域名或在 Google 搜索页点击“抓取当页10条”。
+                </div>
+              </div>
+            </div>
+          </section>
         </div>
-        <div class="card-content">
-          <!-- AI Settings (Collapsible) -->
-          <div id="ai-settings-drawer" class="ai-settings-drawer hidden">
-            <div class="input-group">
-              <label for="ai-chat-mode">联动模式 (Interaction Mode)</label>
-              <select id="ai-chat-mode" style="background: hsla(220, 30%, 5%, 0.6); border: 1px solid hsla(217, 32%, 18%, 0.8); border-radius: 4px; padding: 6px 8px; font-size: 0.78rem; color: var(--text-main); outline: none; cursor: pointer;">
-                <option value="direct" selected>💬 独立 Codex 伴侣 (通过本地 28642 代理对话)</option>
-                <option value="codex_inject">🚀 直连 Codex 窗口 (注入发送到左侧 Codex 页面)</option>
-                <option value="pilotdeck">🚀 直连 PilotDeck 工作舱 (发送到左侧 PilotDeck 页面)</option>
+
+        <!-- Subpanel 2: 发布 (Publish) -->
+        <div id="subpanel-publish" class="sub-panel hidden">
+          <!-- Active Tab Quick Bar -->
+          <section class="card tab-card" style="margin-bottom: 10px;">
+            <div class="card-header" style="padding: 8px 12px;">
+              <div style="display: flex; align-items: center; gap: 6px; overflow: hidden; flex: 1;">
+                <span class="tab-icon" style="font-size: 0.9rem;">📄</span>
+                <span id="tab-title" class="tab-title" style="font-size: 0.8rem;">加载中...</span>
+              </div>
+              <button id="btn-refresh" class="btn btn-secondary" title="刷新页面" style="padding: 4px 8px;">
+                <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+              </button>
+            </div>
+            <div class="card-content" style="padding: 6px 12px;">
+              <div class="tab-url-row" style="padding-left: 0; margin-bottom: 0;">
+                <span id="tab-url" class="tab-url">waiting for tab...</span>
+              </div>
+            </div>
+          </section>
+
+          <!-- 待发布评论资源队列 -->
+          <section class="card batch-card" style="margin-bottom: 10px;">
+            <div class="card-header" style="padding: 8px 12px; display: flex; justify-content: space-between; align-items: center;">
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <span style="font-size: 1.05rem;">🚀</span>
+                <h3>外链发布与分类批处理</h3>
+              </div>
+              <div style="display: flex; gap: 4px;">
+                <button id="btn-probe-clean-queue" class="btn btn-secondary" title="一键并发扫描检测当前队列外链，自动将不可留言静态页、404死链彻底自动清洗删除" style="padding: 2px 6px; font-size: 0.68rem; color: #00f2fe; border-color: rgba(0,242,254,0.4);">
+                  ⚡ 探针检测并清洗
+                </button>
+                <button id="btn-export-disavow" class="btn btn-secondary" title="一键导出黑帽毒性外链为 Google Disavow 拒绝格式文件" style="padding: 2px 6px; font-size: 0.68rem; color: #f87171; border-color: rgba(248,113,113,0.4);">
+                  🛡️ 导出 Disavow
+                </button>
+              </div>
+            </div>
+            <div class="card-content" style="padding: 8px 12px;">
+              <!-- 批处理实时进度与计数器面板 -->
+              <div class="publish-progress-bar-container" style="background: hsla(220, 30%, 6%, 0.8); border: 1px solid hsla(217, 32%, 18%, 0.8); border-radius: 6px; padding: 6px 10px; margin-bottom: 8px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.72rem; margin-bottom: 4px;">
+                  <span style="color: var(--text-main); font-weight: 600;">📊 发布工作进度:</span>
+                  <span id="publish-progress-text" style="color: #00f2fe; font-weight: 600;">已完成 0 / 0 条 (0%)</span>
+                </div>
+                <div style="height: 5px; background: hsla(220, 30%, 12%, 0.8); border-radius: 3px; overflow: hidden;">
+                  <div id="publish-progress-fill" style="width: 0%; height: 100%; background: linear-gradient(90deg, #00f2fe, #10b981); transition: width 0.3s ease;"></div>
+                </div>
+              </div>
+
+              <!-- 🤖 Auto-Pilot 全自动反链引擎控制台 (标签组隔离 & CDP原生截屏) -->
+              <div id="autopilot-control-panel" style="background: linear-gradient(135deg, hsla(220, 30%, 8%, 0.95), hsla(220, 30%, 4%, 0.98)); border: 1px solid rgba(0, 242, 254, 0.35); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; box-shadow: 0 4px 16px rgba(0, 242, 254, 0.08);">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                  <div style="display: flex; align-items: center; gap: 6px;">
+                    <span style="font-size: 1rem;">🤖</span>
+                    <span style="font-size: 0.78rem; font-weight: 700; color: #00f2fe; letter-spacing: 0.3px;">Auto-Pilot 全自动挂机引擎</span>
+                    <span id="autopilot-badge-mode" style="font-size: 0.65rem; padding: 1px 5px; border-radius: 3px; background: rgba(0,242,254,0.15); color: #00f2fe; border: 1px solid rgba(0,242,254,0.3);">CDP + 标签组隔离</span>
+                  </div>
+                  <label style="display: flex; align-items: center; gap: 4px; font-size: 0.68rem; color: var(--text-muted); cursor: pointer;" title="勾选后，挂机任务将在独立的 Chrome 标签组中后台静默运行，绝不干扰您当前窗口的主动浏览与敲代码">
+                    <input type="checkbox" id="chk-autopilot-isolate" checked style="accent-color: #00f2fe; cursor: pointer;">
+                    <span>🛡️ 标签组隔离</span>
+                  </label>
+                </div>
+
+                <!-- 挂机控制按钮组 -->
+                <div style="display: flex; gap: 6px; margin-bottom: 8px;">
+                  <button id="btn-autopilot-start" class="btn btn-primary" style="flex: 1.5; padding: 5px 10px; font-size: 0.75rem; background: linear-gradient(135deg, #00f2fe, #10b981); color: #000; font-weight: 700; border: none; border-radius: 5px; cursor: pointer;">
+                    ▶ 启动挂机
+                  </button>
+                  <button id="btn-autopilot-pause" class="btn btn-secondary" disabled style="flex: 1; padding: 5px 8px; font-size: 0.75rem; border-radius: 5px; cursor: pointer;">
+                    ⏸ 暂停
+                  </button>
+                  <button id="btn-autopilot-stop" class="btn btn-secondary" disabled style="flex: 1; padding: 5px 8px; font-size: 0.75rem; color: #f87171; border-color: rgba(248,113,113,0.4); border-radius: 5px; cursor: pointer;">
+                    🛑 终止
+                  </button>
+                </div>
+
+                <!-- 运行状态指示器 -->
+                <div style="background: hsla(220, 30%, 5%, 0.8); border: 1px solid hsla(217, 32%, 18%, 0.8); border-radius: 6px; padding: 6px 8px; margin-bottom: 6px;">
+                  <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.72rem; margin-bottom: 3px;">
+                    <span id="autopilot-step-indicator" style="color: #60a5fa; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">📍 [就绪] 待命中，点击启动开始自动化流水线</span>
+                    <span id="autopilot-timer-badge" style="font-size: 0.68rem; color: #34d399; font-weight: bold; white-space: nowrap;"></span>
+                  </div>
+                  <div id="autopilot-cooldown-bar" style="height: 3px; background: hsla(220, 30%, 14%, 0.8); border-radius: 2px; overflow: hidden;">
+                    <div id="autopilot-cooldown-fill" style="width: 0%; height: 100%; background: linear-gradient(90deg, #f59e0b, #10b981); transition: width 0.4s linear;"></div>
+                  </div>
+                </div>
+
+                <!-- 实时终端日志流 (折叠式) -->
+                <details style="font-size: 0.7rem; color: var(--text-muted); cursor: pointer;">
+                  <summary style="font-size: 0.68rem; color: var(--text-muted); outline: none; user-select: none;">
+                    🖥️ 查看 Auto-Pilot 执行日志流 (<span id="autopilot-log-count">0</span>)
+                  </summary>
+                  <div id="autopilot-log-terminal" style="margin-top: 5px; max-height: 100px; overflow-y: auto; background: #050a14; border: 1px solid #1e293b; border-radius: 4px; padding: 5px 8px; font-family: monospace; font-size: 0.66rem; color: #94a3b8; line-height: 1.4; white-space: pre-wrap;">[就绪] 挂机引擎待命...</div>
+                </details>
+              </div>
+
+              <!-- 批次全部完成智能引导 Banner (100% 达成时高亮呈现) -->
+              <div id="publish-sprint-banner" class="hidden" style="background: linear-gradient(135deg, rgba(16, 185, 129, 0.15), rgba(0, 242, 254, 0.15)); border: 1px solid rgba(16, 185, 129, 0.5); border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 6px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <span style="font-size: 0.76rem; font-weight: 600; color: #34d399;">🎉 本组 10 条外链已全部完成！</span>
+                  <span style="font-size: 0.68rem; color: #34d399; font-weight: bold;">100% 达成</span>
+                </div>
+                <div style="display: flex; gap: 6px;">
+                  <button id="btn-next-google-batch" class="btn btn-primary" style="flex: 1; padding: 4px 8px; font-size: 0.72rem; background: linear-gradient(135deg, #10b981, #00f2fe); border: none; color: #000; font-weight: bold; cursor: pointer;">
+                    👉 翻至下一页并抓取新一组
+                  </button>
+                  <button id="btn-clear-done-batch" class="btn btn-secondary" style="padding: 4px 8px; font-size: 0.72rem; cursor: pointer;">
+                    🧹 清空重置
+                  </button>
+                </div>
+              </div>
+
+              <!-- 6 大分类 Pill 筛选器 (带动态数量标注) -->
+              <div id="publish-category-pills" style="display: flex; gap: 4px; overflow-x: auto; margin-bottom: 8px; scrollbar-width: none;">
+                <button class="pub-cat-pill active" data-cat="all" style="padding: 3px 7px; font-size: 0.68rem; border-radius: 4px; border: 1px solid #00f2fe; background: rgba(0,242,254,0.15); color: #00f2fe; cursor: pointer; white-space: nowrap;">🌐 全部 (<span id="pill-cnt-all">0</span>)</button>
+                <button class="pub-cat-pill" data-cat="blog_comment" style="padding: 3px 7px; font-size: 0.68rem; border-radius: 4px; border: 1px solid hsla(217, 32%, 22%, 0.8); background: transparent; color: var(--text-muted); cursor: pointer; white-space: nowrap;">💬 博客评论 (<span id="pill-cnt-blog">0</span>)</button>
+                <button class="pub-cat-pill" data-cat="directory" style="padding: 3px 7px; font-size: 0.68rem; border-radius: 4px; border: 1px solid hsla(217, 32%, 22%, 0.8); background: transparent; color: var(--text-muted); cursor: pointer; white-space: nowrap;">🧭 目录导航 (<span id="pill-cnt-dir">0</span>)</button>
+                <button class="pub-cat-pill" data-cat="platform_saas" style="padding: 3px 7px; font-size: 0.68rem; border-radius: 4px; border: 1px solid hsla(217, 32%, 22%, 0.8); background: transparent; color: var(--text-muted); cursor: pointer; white-space: nowrap;">🚀 平台收录 (<span id="pill-cnt-saas">0</span>)</button>
+                <button class="pub-cat-pill" data-cat="forum_community" style="padding: 3px 7px; font-size: 0.68rem; border-radius: 4px; border: 1px solid hsla(217, 32%, 22%, 0.8); background: transparent; color: var(--text-muted); cursor: pointer; white-space: nowrap;">👥 社区论坛 (<span id="pill-cnt-forum">0</span>)</button>
+                <button class="pub-cat-pill" data-cat="toxic" style="padding: 3px 7px; font-size: 0.68rem; border-radius: 4px; border: 1px solid rgba(248,113,113,0.5); background: rgba(248,113,113,0.1); color: #f87171; cursor: pointer; white-space: nowrap;">🔴 黑帽买链 (<span id="pill-cnt-toxic">0</span>)</button>
+              </div>
+
+              <div id="batch-queue-container" style="max-height: 180px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px;">
+                <div id="batch-queue-empty" style="text-align: center; padding: 12px; color: var(--text-muted); font-size: 0.75rem;">
+                  暂无待发布外链，请先在【收集】卡片中抓取并分析博文外链。
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- 博客评论反链助手专区 -->
+          <section class="card comment-card" style="margin-bottom: 10px;">
+            <div class="card-header" style="padding: 8px 12px;">
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <span style="font-size: 1.05rem;">💬</span>
+                <h3>博客评论反链助手</h3>
+              </div>
+              <button id="btn-toggle-profile" class="btn btn-secondary" title="配置个人反链 Profile" style="padding: 3px 8px; font-size: 0.72rem; border-radius: 4px;">
+                ⚙️ 资料配置
+              </button>
+            </div>
+            <div class="card-content" style="padding: 10px 12px;">
+              <!-- Profile Collapsible Drawer -->
+              <div id="profile-drawer" class="profile-drawer hidden">
+                <div style="display: flex; gap: 6px; margin-bottom: 10px;">
+                  <button id="btn-profile-template-en" type="button" class="btn btn-secondary btn-sm" style="flex: 1; font-size: 0.72rem; color: #38bdf8; border-color: rgba(56,189,248,0.4);" title="一键填入适合海外导航站 (ProductHunt/Toolify/Futurepedia) 审核的高过审英文模版">
+                    🇬🇧 填入英文模版 (English)
+                  </button>
+                  <button id="btn-profile-template-zh" type="button" class="btn btn-secondary btn-sm" style="flex: 1; font-size: 0.72rem; color: #fbbf24; border-color: rgba(251,191,36,0.4);" title="一键填入国内导航站中文模版">
+                    🇨🇳 填入中文模版 (Chinese)
+                  </button>
+                </div>
+                <div class="input-group">
+                  <label for="profile-name">昵称 / 姓名 (Name)</label>
+                  <input type="text" id="profile-name" placeholder="例：Alex @ APIVALE">
+                </div>
+                <div class="input-group">
+                  <label for="profile-email">电子邮箱 (Email)</label>
+                  <input type="email" id="profile-email" placeholder="例：support@apivale.com">
+                </div>
+                <div class="input-group">
+                  <label for="profile-url">目标引流网址 (Target Website URL)</label>
+                  <input type="url" id="profile-url" placeholder="例：https://apivale.com/">
+                </div>
+                <div class="input-group">
+                  <label for="profile-tagline">一句话简介 (Tagline)</label>
+                  <input type="text" id="profile-tagline" placeholder="例：一站式 AI 大模型 API 聚合与转接平台">
+                </div>
+                <div class="input-group">
+                  <label for="profile-bio">网站定位 / 引入说明 (Site Niche)</label>
+                  <input type="text" id="profile-bio" placeholder="例：专注 AI 工具与多模型 API 路由的开发者平台">
+                </div>
+                <div class="input-group">
+                  <label for="profile-detail-desc">详细介绍 / 富文本长描述 (Detail Description)</label>
+                  <textarea id="profile-detail-desc" rows="3" style="width:100%; box-sizing:border-box; background:hsla(220, 30%, 5%, 0.8); border:1px solid hsla(217, 32%, 22%, 0.8); color:var(--text-main); font-size:0.76rem; padding:5px 8px; border-radius:6px;" placeholder="例：APIVALE 致力于提供稳定、高速、低延迟的 AI 大模型 API 网关服务..."></textarea>
+                </div>
+                <div class="input-group">
+                  <label for="profile-tags">分类标签 (Tags - 逗号分隔)</label>
+                  <input type="text" id="profile-tags" placeholder="例：AI, 大模型, API, 开发工具">
+                </div>
+                <div class="input-group">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
+                    <label for="profile-favicon-url" style="margin: 0;">Favicon 图标 URL (用于自动文件上传)</label>
+                    <a id="link-preview-favicon" href="#" target="_blank" style="font-size: 0.68rem; color: #38bdf8; text-decoration: none; display: none;">🔍 打开原图核对</a>
+                  </div>
+                  <div style="display: flex; gap: 6px; align-items: center;">
+                    <img id="img-preview-favicon" src="" alt="Favicon" style="width: 24px; height: 24px; border-radius: 4px; border: 1px solid hsla(217, 32%, 22%, 0.8); background: hsla(220, 30%, 5%, 0.8); object-fit: contain; flex-shrink: 0; display: none;">
+                    <input type="url" id="profile-favicon-url" placeholder="例：https://apivale.com/favicon.ico" style="flex: 1;">
+                  </div>
+                </div>
+                <div class="input-group">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
+                    <label for="profile-screenshot-url" style="margin: 0;">网站截图 / 封面 (用于自动文件上传)</label>
+                    <div style="display: flex; gap: 4px; align-items: center;">
+                      <button id="btn-capture-active-tab" type="button" class="btn btn-secondary btn-sm" style="padding: 1px 5px; font-size: 0.65rem; color: #34d399; border-color: rgba(52,211,153,0.4);" title="直接截取您当前浏览器标签页（如正打开的产品主页）为 1080P 高清截图">📸 截取当前页</button>
+                      <button id="btn-cloud-screenshot" type="button" class="btn btn-secondary btn-sm" style="padding: 1px 5px; font-size: 0.65rem; color: #a78bfa; border-color: rgba(167,139,250,0.4);" title="基于上方网址自动生成 1280x853 云端实机渲染快照">🌐 云端快照</button>
+                      <label for="input-local-screenshot" class="btn btn-secondary btn-sm" style="padding: 1px 5px; font-size: 0.65rem; cursor: pointer; color: #00f2fe; border-color: rgba(0,242,254,0.4); margin: 0;" title="从电脑本地上传 1280x853 封面设计图">📁 本地选图</label>
+                      <input type="file" id="input-local-screenshot" accept="image/*" style="display: none;">
+                      <a id="link-preview-screenshot" href="#" target="_blank" style="font-size: 0.66rem; color: #38bdf8; text-decoration: none; display: none;">🔍 核对</a>
+                    </div>
+                  </div>
+                  <div style="display: flex; gap: 6px; align-items: center;">
+                    <img id="img-preview-screenshot" src="" alt="Screenshot" style="width: 48px; height: 27px; border-radius: 4px; border: 1px solid hsla(217, 32%, 22%, 0.8); background: hsla(220, 30%, 5%, 0.8); object-fit: cover; flex-shrink: 0; display: none;">
+                    <input type="url" id="profile-screenshot-url" placeholder="例：https://apivale.com/logo.png" style="flex: 1;">
+                  </div>
+                </div>
+                <div style="display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap;">
+                  <button id="btn-save-profile" class="btn btn-secondary btn-sm" style="flex: 1.2;">💾 保存反链资料</button>
+                  <button id="btn-fill-directory-form-now" class="btn btn-primary btn-sm" style="flex: 1.5; background: linear-gradient(135deg, #10b981, #059669); font-size: 0.72rem;" title="自动识别当前打开网页中的导航站提交表单并高亮一键填入全量信息">⚡ 自动填入当前导航表单</button>
+                  <button id="btn-export-full-config" class="btn btn-secondary btn-sm" style="padding: 4px 6px; font-size: 0.7rem;" title="导出全量配置JSON备份">📤 备份配置</button>
+                  <label for="input-import-full-config" class="btn btn-secondary btn-sm" style="padding: 4px 6px; font-size: 0.7rem; cursor: pointer; text-align: center;" title="一键导入恢复配置JSON">📥 恢复导入</label>
+                  <input type="file" id="input-import-full-config" accept=".json" style="display: none;">
+                </div>
+              </div>
+
+              <!-- Comment Language Selector -->
+              <div class="comment-lang-row" style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; padding: 5px 8px; background: hsla(220, 30%, 6%, 0.6); border-radius: 6px; border: 1px solid hsla(217, 32%, 18%, 0.8);">
+                <label for="sel-comment-lang" style="font-size: 0.74rem; color: var(--text-muted); margin: 0; display: flex; align-items: center; gap: 4px;">
+                  <span>🌐</span>
+                  <span>评论生成语种:</span>
+                </label>
+                <select id="sel-comment-lang" style="background: hsla(220, 30%, 5%, 0.8); border: 1px solid hsla(217, 32%, 22%, 0.8); border-radius: 4px; padding: 2px 6px; font-size: 0.74rem; color: var(--text-main); outline: none; cursor: pointer;">
+                  <option value="en" selected>🇬🇧 默认生成英文 (English)</option>
+                  <option value="auto">🌐 智能感知博文同语种</option>
+                  <option value="zh">🇨🇳 强制中文 (Chinese)</option>
+                </select>
+              </div>
+
+              <!-- Status Indicator Badge -->
+              <div class="comment-status-row" style="margin-bottom: 8px; display: flex; gap: 6px; align-items: center;">
+                <div id="comment-detect-badge" class="badge-info" style="flex: 1; font-size: 0.74rem; padding: 5px 8px; border-radius: 6px; background: hsla(217, 32%, 14%, 0.6); border: 1px solid hsla(217, 32%, 22%, 0.8); color: var(--text-muted); display: flex; align-items: center; gap: 6px;">
+                  <span class="status-indicator-dot" style="width: 6px; height: 6px; border-radius: 50%; background: #00f2fe; display: inline-block;"></span>
+                  <span id="comment-detect-text">点击下方按钮，智能分析正文或填入导航表单...</span>
+                </div>
+                <button id="btn-quick-mark-done" class="btn btn-secondary" style="padding: 4px 8px; font-size: 0.7rem; color: #34d399; border-color: rgba(52,211,153,0.4); white-space: nowrap;" title="人工提交完成后，将当前页面在队列中标为已完成打上横线">✔ 标为完成</button>
+              </div>
+
+              <div style="display: flex; gap: 6px; margin-bottom: 8px;">
+                <button id="btn-generate-comment" class="btn btn-obsidian-ai" style="flex: 1.6; justify-content: center; margin-bottom: 0; padding: 6px 8px; font-size: 0.76rem;">
+                  <span class="btn-icon">✨</span>
+                  <span>自动阅读并生成评论</span>
+                </button>
+                <button id="btn-quick-fill-directory" class="btn btn-secondary" style="flex: 1.1; justify-content: center; font-size: 0.74rem; color: #10b981; border-color: rgba(16,185,129,0.5); background: rgba(16,185,129,0.1); white-space: nowrap;" title="一键将当前独立站全量资料(标题/URL/富文本/图片/邮箱)自动填入当前导航站">
+                  <span>⚡ 填导航表单</span>
+                </button>
+              </div>
+
+              <!-- Human-in-the-Loop Review Area -->
+              <div id="comment-review-area" class="review-area hidden">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                  <label style="font-size: 0.76rem; font-weight: 600; color: var(--text-main);">AI 建议评论 (3-Step 高价值格式)：</label>
+                  <span id="comment-char-count" style="font-size: 0.72rem; color: var(--text-muted);">0 字</span>
+                </div>
+                <textarea id="comment-textarea" class="comment-textarea" rows="4" placeholder="AI 生成的 3-Step 评论将在此处展示，您可以自由编辑..."></textarea>
+                
+                <div style="display: flex; gap: 6px; margin-top: 6px;">
+                  <button id="btn-fill-form" class="btn btn-secondary" style="flex: 1; font-size: 0.76rem; padding: 6px 8px;">
+                    <span>📝 仅填入表单</span>
+                  </button>
+                  <button id="btn-submit-form" class="btn btn-primary" style="flex: 1.2; font-size: 0.76rem; padding: 6px 8px;">
+                    <span>🚀 填入并提交</span>
+                  </button>
+                </div>
+                <div id="comment-action-status" style="font-size: 0.74rem; margin-top: 6px; text-align: center; color: var(--text-muted);" class="hidden"></div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <!-- Subpanel 3: 📍 外链推荐 (Directory) -->
+        <div id="subpanel-directory" class="sub-panel hidden">
+          <section class="card directory-card" style="margin-bottom: 10px;">
+            <div class="card-header" style="padding: 8px 12px;">
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <span style="font-size: 1.05rem;">📍</span>
+                <h3>优质外链目标精选库</h3>
+              </div>
+            </div>
+            <div class="card-content" style="padding: 10px 12px;">
+              <!-- 搜索与筛选控制行 -->
+              <div style="margin-bottom: 8px;">
+                <input type="text" id="dir-search-input" placeholder="🔍 搜索域名、关键字或标签 (如 DeepSeek)..." style="width: 100%; background: hsla(220, 30%, 5%, 0.8); border: 1px solid hsla(217, 32%, 22%, 0.8); color: var(--text-main); font-size: 0.76rem; padding: 6px 10px; border-radius: 6px; box-sizing: border-box; outline: none;">
+              </div>
+
+              <!-- 分类标签过滤器 -->
+              <div id="dir-category-pills" style="display: flex; gap: 4px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 8px; scrollbar-width: none;">
+                <!-- 动态填充分类标签 -->
+              </div>
+
+              <!-- 推荐目标卡片网格容器 -->
+              <div id="directory-grid-container" style="max-height: 280px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 2px;">
+                <!-- 动态渲染推荐目标卡片 -->
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <!-- Subpanel 4: 📊 存活看板 (Dashboard) -->
+        <div id="subpanel-dashboard" class="sub-panel hidden">
+          
+          <!-- Google Sheets 云同步配置卡片 -->
+          <section class="card gsheets-card" style="margin-bottom: 10px;">
+            <div class="card-header" style="padding: 8px 12px;">
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <span style="font-size: 1.05rem;">🔗</span>
+                <h3>Google Sheets 谷歌表格云同步</h3>
+              </div>
+              <button id="btn-toggle-gsheets-drawer" class="btn btn-secondary" style="padding: 3px 8px; font-size: 0.72rem;">
+                ⚙️ 配置
+              </button>
+            </div>
+            <div id="gsheets-drawer" class="card-content hidden" style="padding: 10px 12px;">
+              <div class="input-group" style="margin-bottom: 8px;">
+                <label style="font-size: 0.74rem; color: var(--text-muted);">Google Apps Script Webhook URL</label>
+                <input type="url" id="input-gsheet-webhook" placeholder="例: https://script.google.com/macros/s/.../exec" style="width: 100%; background: hsla(220, 30%, 5%, 0.8); border: 1px solid hsla(217, 32%, 22%, 0.8); color: var(--text-main); font-size: 0.76rem; padding: 5px 8px; border-radius: 6px; box-sizing: border-box;">
+              </div>
+              
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <label class="checkbox-label" style="font-size: 0.74rem; display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                  <input type="checkbox" id="chk-gsheet-autosync">
+                  <span>发布与探针检测后自动同步至云端表格</span>
+                </label>
+              </div>
+
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; gap: 6px;">
+                <label style="font-size: 0.74rem; color: var(--text-muted); flex-shrink: 0;">拉取检测范围:</label>
+                <select id="sel-gsheet-probe-range" style="flex: 1; background: hsla(220, 30%, 5%, 0.8); border: 1px solid hsla(217, 32%, 22%, 0.8); color: var(--text-main); font-size: 0.74rem; padding: 3px 6px; border-radius: 4px;">
+                  <option value="7days">📅 近 7 天提交 (日常推荐)</option>
+                  <option value="30days">📅 近 30 天提交</option>
+                  <option value="pending_only">⏳ 仅待审核/未验证</option>
+                  <option value="all">🌐 全量历史拉取</option>
+                </select>
+              </div>
+
+              <div style="display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap;">
+                <button id="btn-save-gsheet-config" class="btn btn-primary" style="flex: 1; padding: 4px 8px; font-size: 0.72rem;">💾 保存配置</button>
+                <button id="btn-sync-project-tab" class="btn btn-secondary" style="flex: 1.2; padding: 4px 8px; font-size: 0.72rem; color: #34d399; border-color: rgba(52,211,153,0.4);" title="自动在绑定的谷歌表格中为当前切替的独立站项目生成专属页签">🚀 生成项目页签</button>
+                <button id="btn-sync-gsheet-history" class="btn btn-secondary" style="flex: 1; padding: 4px 8px; font-size: 0.72rem;">📤 补发历史</button>
+                <button id="btn-pull-probe-gsheet" class="btn btn-secondary" style="flex: 1.4; padding: 4px 8px; font-size: 0.72rem; color: #00f2fe; border-color: rgba(0,242,254,0.4);" title="按选择范围拉取 URL 数据并并发执行外链存活探针检测">📥 拉取表格并检测存活</button>
+              </div>
+
+              <div style="padding: 6px 8px; background: hsla(220, 30%, 6%, 0.6); border-radius: 6px; border: 1px dashed hsla(217, 32%, 25%, 0.8); font-size: 0.7rem; color: var(--text-muted); display: flex; justify-content: space-between; align-items: center;">
+                <span>💡 10秒部署：复制代码粘贴至表格 Apps Script</span>
+                <button id="btn-copy-apps-script" class="btn btn-secondary" style="padding: 2px 6px; font-size: 0.68rem; color: #00f2fe; border-color: #00f2fe;">📋 复制代码</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="card dashboard-card" style="margin-bottom: 10px;">
+            <div class="card-header" style="padding: 8px 12px;">
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <span style="font-size: 1.05rem;">📊</span>
+                <h3>外链资产与存活监控看板</h3>
+              </div>
+              <button id="btn-export-dashboard-csv" class="btn btn-secondary" title="导出 CSV 完整报告" style="padding: 3px 8px; font-size: 0.72rem;">
+                📊 导出 CSV
+              </button>
+            </div>
+            <div class="card-content" style="padding: 10px 12px;">
+              
+              <!-- 指标卡片网格 -->
+              <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; text-align: center; margin-bottom: 10px;">
+                <div style="background: hsla(220, 30%, 6%, 0.6); padding: 8px 4px; border-radius: 6px; border: 1px solid hsla(217, 32%, 18%, 0.6);">
+                  <div id="dash-stat-total" style="font-size: 1.25rem; font-weight: 700; color: #60a5fa;">0</div>
+                  <div style="font-size: 0.66rem; color: var(--text-muted);">已发布总数</div>
+                </div>
+                <div style="background: hsla(220, 30%, 6%, 0.6); padding: 8px 4px; border-radius: 6px; border: 1px solid hsla(217, 32%, 18%, 0.6);">
+                  <div id="dash-stat-liverate" style="font-size: 1.25rem; font-weight: 700; color: #10b981;">0%</div>
+                  <div style="font-size: 0.66rem; color: var(--text-muted);">在线存活率</div>
+                </div>
+                <div style="background: hsla(220, 30%, 6%, 0.6); padding: 8px 4px; border-radius: 6px; border: 1px solid hsla(217, 32%, 18%, 0.6);">
+                  <div id="dash-stat-dofollow" style="font-size: 1.25rem; font-weight: 700; color: #34d399;">0</div>
+                  <div style="font-size: 0.66rem; color: var(--text-muted);">DoFollow 数</div>
+                </div>
+                <div style="background: hsla(220, 30%, 6%, 0.6); padding: 8px 4px; border-radius: 6px; border: 1px solid hsla(217, 32%, 18%, 0.6);">
+                  <div id="dash-stat-avgscore" style="font-size: 1.25rem; font-weight: 700; color: #fbbf24;">0</div>
+                  <div style="font-size: 0.66rem; color: var(--text-muted);">平均契合分</div>
+                </div>
+              </div>
+
+              <!-- 全量探针检测操作栏 -->
+              <div style="display: flex; gap: 6px; align-items: center; justify-content: space-between; margin-bottom: 8px; padding: 6px 8px; background: hsla(220, 30%, 6%, 0.6); border-radius: 6px; border: 1px solid hsla(217, 32%, 18%, 0.8);">
+                <span id="dash-probe-status" style="font-size: 0.72rem; color: var(--text-muted);">状态就绪，点击开始外链探针...</span>
+                <button id="btn-verify-all-links" class="btn btn-primary" style="padding: 4px 10px; font-size: 0.72rem; flex-shrink: 0; background: linear-gradient(135deg, #10b981, #059669);">
+                  ⚡ 一键检测外链存活
+                </button>
+              </div>
+
+              <!-- 状态过滤器标签栏 -->
+              <div id="dash-filter-pills" style="display: flex; gap: 4px; overflow-x: auto; margin-bottom: 8px;">
+                <button class="dash-pill active" data-filter="all" style="padding: 3px 8px; font-size: 0.7rem; border-radius: 4px; border: 1px solid #60a5fa; background: rgba(96,165,250,0.15); color: #60a5fa; cursor: pointer;">全部</button>
+                <button class="dash-pill" data-filter="live_dofollow" style="padding: 3px 8px; font-size: 0.7rem; border-radius: 4px; border: 1px solid hsla(217, 32%, 22%, 0.8); background: transparent; color: var(--text-muted); cursor: pointer;">🟢 Live (DoFollow)</button>
+                <button class="dash-pill" data-filter="pending" style="padding: 3px 8px; font-size: 0.7rem; border-radius: 4px; border: 1px solid hsla(217, 32%, 22%, 0.8); background: transparent; color: var(--text-muted); cursor: pointer;">🟡 待审核</button>
+                <button class="dash-pill" data-filter="removed" style="padding: 3px 8px; font-size: 0.7rem; border-radius: 4px; border: 1px solid hsla(217, 32%, 22%, 0.8); background: transparent; color: var(--text-muted); cursor: pointer;">🔴 被清除/报错</button>
+              </div>
+
+              <!-- 日志列表容器 -->
+              <div id="dashboard-log-container" style="max-height: 220px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px;">
+                <div id="dash-logs-empty" style="color: var(--text-muted); text-align: center; padding: 15px; font-size: 0.75rem;">
+                  暂无已发外链日志，请先在【发布】标签页完成外链提交。
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+
+      </div> <!-- End Panel Outreach -->
+
+
+
+      <!-- Panel 2: Markdown 剪存专区 (默认隐藏) -->
+      <div id="panel-markdown" class="tab-panel hidden">
+        <section class="card preview-card">
+          <div class="card-header">
+            <h3>AI 视角 (正文 Markdown 预览)</h3>
+            <span id="char-count" class="char-count">0 字</span>
+          </div>
+          <div class="card-content">
+            <div class="btn-group" style="margin-bottom: 10px;">
+              <button id="btn-fetch" class="btn btn-primary">
+                <span>提取并预览当前网页 Markdown</span>
+              </button>
+            </div>
+            <div id="markdown-placeholder" class="placeholder-text">
+              点击上方按钮，即可在本地预览提取的 Markdown 排版文本。
+            </div>
+            <pre id="markdown-preview" class="markdown-preview-area hidden"></pre>
+            
+            <!-- Obsidian Clipping Actions -->
+            <div id="obsidian-actions" class="obsidian-actions hidden">
+              <div class="options-row" style="display: flex; align-items: center; margin-bottom: 8px; font-size: 0.82rem; gap: 8px; color: var(--text-muted); justify-content: flex-start; padding: 0 4px;">
+                <label class="checkbox-label" style="display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;">
+                  <input type="checkbox" id="chk-outliner-mode">
+                  <span>以大纲列表模式 (Outliner Mode) 导出</span>
+                </label>
+              </div>
+              <button id="btn-save-obsidian" class="btn btn-obsidian">
+                <span class="btn-icon">💾</span>
+                <span>一键剪存至 Obsidian</span>
+              </button>
+              <button id="btn-ai-save-obsidian" class="btn btn-obsidian-ai">
+                <span class="btn-icon">✨</span>
+                <span>AI 摘要并剪存</span>
+              </button>
+            </div>
+          </div>
+        </section>
+      </div> <!-- End Panel Markdown -->
+
+
+      <!-- Panel 3: 网页伴侣 AI 专区 (默认隐藏) -->
+      <div id="panel-chat" class="tab-panel hidden">
+        
+        <!-- Mode & Config Quick Card -->
+        <section class="card status-card" style="margin-bottom: 10px;">
+          <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; padding: 8px 12px;">
+            <h3>运行模式 & AI 接口配置</h3>
+            <button id="btn-toggle-settings" class="btn btn-secondary" title="配置 AI 模型接口" style="padding: 3px 8px; font-size: 0.72rem;">
+              ⚙️ 设置
+            </button>
+          </div>
+          <div class="card-content" style="padding: 10px 12px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <span style="font-size: 0.76rem; color: var(--text-muted);">架构模式:</span>
+              <select id="sel-op-mode" style="background: hsla(220, 30%, 5%, 0.6); border: 1px solid hsla(217, 32%, 18%, 0.8); border-radius: 4px; padding: 3px 6px; font-size: 0.74rem; color: var(--text-main); outline: none; cursor: pointer;">
+                <option value="ws_bridge" selected>🔗 中转桥接模式</option>
+                <option value="standalone">💾 浏览器直写模式</option>
               </select>
             </div>
-            <div class="input-group">
-              <label for="ai-api-url">本地 Codex 代理 (Base URL)</label>
-              <input type="text" id="ai-api-url" placeholder="http://localhost:28642/v1">
-            </div>
-            <div class="input-group">
-              <label for="ai-api-key">独立模式密钥 (API Key)</label>
-              <input type="password" id="ai-api-key" placeholder="无需填写（本地代理）">
-            </div>
-            <div class="input-group">
-              <label for="ai-model">独立模式模型 (Model)</label>
-              <input type="text" id="ai-model" placeholder="gpt-5.5 或 sensenova/sensenova-6.7-flash-lite">
-            </div>
-            <button id="btn-save-settings" class="btn btn-secondary btn-sm" style="margin-top: 4px;">保存配置</button>
-          </div>
 
-          <!-- Chat Dialog Area -->
-          <div id="chat-messages" class="chat-messages">
-            <div class="msg msg-system">
-              💬 我是您的 Codex 网页伴侣 (Codex Web Copilot)。您可以在下方直接向我提问，或者勾选“携带当前网页”，我会结合当前页面的 Markdown 文本为您提供翻译、答疑和深度总结！
+            <!-- Bridge Mode Status -->
+            <div id="bridge-mode-ui">
+              <p id="status-desc" style="font-size: 0.74rem;">服务: <code>ws://127.0.0.1:3010</code></p>
+              <div class="progress-bar-container" style="height: 3px;">
+                <div id="status-progress" class="progress-bar progress-bar-disconnected"></div>
+              </div>
+              <div id="startup-guide-trigger" class="startup-guide-trigger hidden">
+                <span>💡 想要开机自动秒连？点击查看</span>
+              </div>
+              <div id="startup-guide-content" class="startup-guide-content hidden">
+                <p>在工作区下右键运行 <code>install-startup.ps1</code> 即可开启后台自启。</p>
+              </div>
+            </div>
+            
+            <!-- Standalone Mode UI -->
+            <div id="standalone-mode-ui" class="hidden" style="margin-top: 4px;">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <button id="btn-choose-dir" class="btn btn-secondary btn-sm" style="flex-shrink: 0; padding: 4px 8px; font-size: 0.74rem;">📁 选择 Obsidian 库目录</button>
+                <span id="dir-status-text" style="font-size: 0.74rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">未选择目录</span>
+              </div>
+            </div>
+
+            <!-- AI Settings Drawer -->
+            <div id="ai-settings-drawer" class="ai-settings-drawer hidden" style="margin-top: 8px;">
+              <div class="input-group" style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+                <input type="checkbox" id="chk-use-custom-ai" style="width: auto; cursor: pointer; height: auto; margin: 0;">
+                <label for="chk-use-custom-ai" style="margin-bottom: 0; cursor: pointer; font-size: 0.74rem;">使用自定义 AI 接口</label>
+              </div>
+              <div class="input-group">
+                <label for="ai-chat-mode">联动模式 (Interaction Mode)</label>
+                <select id="ai-chat-mode" style="background: hsla(220, 30%, 5%, 0.6); border: 1px solid hsla(217, 32%, 18%, 0.8); border-radius: 4px; padding: 4px 6px; font-size: 0.74rem; color: var(--text-main); outline: none;">
+                  <option value="direct" selected>💬 独立 AI 伴侣 (通过本地 28642 代理对话)</option>
+                  <option value="codex_inject">🚀 直连 Codex 窗口 (注入发送到左侧 Codex 页面)</option>
+                  <option value="pilotdeck">🚀 直连 PilotDeck 工作舱 (发送到左侧 PilotDeck 页面)</option>
+                </select>
+              </div>
+              <div class="input-group">
+                <label for="ai-api-url">本地 AI 代理 (Base URL)</label>
+                <input type="text" id="ai-api-url" placeholder="http://localhost:28642/v1">
+              </div>
+              <div class="input-group">
+                <label for="ai-api-key">独立模式密钥 (API Key)</label>
+                <input type="password" id="ai-api-key" placeholder="无需填写（本地代理）">
+              </div>
+              <div class="input-group">
+                <label for="ai-model">独立模式模型 (Model)</label>
+                <input type="text" id="ai-model" placeholder="gpt-5.5 或 sensenova/sensenova-6.7-flash-lite">
+              </div>
+              <button id="btn-save-settings" class="btn btn-secondary btn-sm" style="margin-top: 4px;">保存配置</button>
+            </div>
+
+          </div>
+        </section>
+
+        <!-- Chat Card -->
+        <section class="card chat-card">
+          <div class="card-header">
+            <h3>ComLinkAI 网页伴侣 (Web Copilot)</h3>
+          </div>
+          <div class="card-content" style="padding: 10px 12px;">
+            <div id="chat-messages" class="chat-messages" style="height: 220px;">
+              <div class="msg msg-system">
+                💬 我是您的 ComLinkAI 网页伴侣。结合当前页面的 Markdown 文本，我可以为您提供分析、答疑、生成博客评论或深度总结！
+              </div>
+            </div>
+
+            <div class="chat-controls">
+              <label class="checkbox-label">
+                <input type="checkbox" id="chk-use-context" checked>
+                <span>携带当前网页内容作为 AI 上下文</span>
+              </label>
+              <button id="btn-clear-chat" class="btn-clear" title="清空对话历史">🗑️</button>
+            </div>
+            
+            <div class="chat-input-row">
+              <textarea id="chat-input" placeholder="输入您对网页的问题... (Shift+Enter换行，Enter发送)"></textarea>
+              <button id="btn-send-chat" class="btn btn-primary btn-icon">
+                <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+              </button>
             </div>
           </div>
+        </section>
+      </div> <!-- End Panel Chat -->
 
-          <!-- Input Controls -->
-          <div class="chat-controls">
-            <label class="checkbox-label">
-              <input type="checkbox" id="chk-use-context" checked>
-              <span>携带当前网页内容作为 AI 上下文</span>
-            </label>
-            <button id="btn-clear-chat" class="btn-clear" title="清空对话历史">🗑️</button>
-          </div>
-          
-          <div class="chat-input-row">
-            <textarea id="chat-input" placeholder="输入您对网页的问题... (Shift+Enter换行，Enter发送)"></textarea>
-            <button id="btn-send-chat" class="btn btn-primary btn-icon">
-              <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
-            </button>
-          </div>
-        </div>
-      </section>
     </main>
 
     <!-- Footer -->
     <footer class="app-footer">
-      <span>CodexLink v1.0.0</span>
+      <span>ComLinkAI Pro v2.2.0</span>
       <span class="divider">•</span>
-      <span>已加载上帝视角</span>
+      <span>竞品外链挖掘与白帽自动评论</span>
     </footer>
   </div>
+
+  <script src="lib/xlsx.mini.min.js"></script>
+  <script src="modules/csv_importer.js"></script>
+  <script src="modules/project_manager.js"></script>
+  <script src="modules/link_directory.js"></script>
+  <script src="modules/link_checker.js"></script>
+  <script src="modules/google_sheets_sync.js"></script>
+  <script src="modules/publish_logger.js"></script>
+  <script src="modules/safety_guard.js"></script>
+  <script src="modules/relevance_scorer.js"></script>
+  <script src="modules/form_detector.js"></script>
   <script src="sidepanel.js"></script>
+
+
+
 </body>
 </html>

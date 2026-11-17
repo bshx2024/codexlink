@@ -1,4 +1,10 @@
-﻿# Node dependencies
+﻿# Logs
+*.log
+*.err
+server.log
+server.err
+
+# Node dependencies
 node_modules/
 npm-debug.log*
 yarn-debug.log*

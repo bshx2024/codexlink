@@ -18,18 +18,22 @@ Write-Host "`n==================================================================
 Write-Host "  Registering [Silent Background Auto-Start] Scheduled Task..." -ForegroundColor White -Bold
 Write-Host "==========================================================================`n" -ForegroundColor Cyan
 
+$serverExe = Join-Path $PSScriptRoot "codexlink-server.exe"
 $serverScript = Join-Path $PSScriptRoot "run-server.ps1"
 
-if (-not (Test-Path $serverScript)) {
-    Write-Host " [✘] ERROR: run-server.ps1 was not found in the workspace directory!" -ForegroundColor Red -Bold
+if (Test-Path $serverExe) {
+    $Action = New-ScheduledTaskAction -Execute $serverExe -WorkingDirectory $PSScriptRoot
+} elseif (Test-Path $serverScript) {
+    $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -File `"$serverScript`"" -WorkingDirectory $PSScriptRoot
+} else {
+    Write-Host " [✘] ERROR: Neither codexlink-server.exe nor run-server.ps1 was found in the workspace directory!" -ForegroundColor Red -Bold
     Read-Host "Press Enter to exit..."
     exit
 }
 
 $TaskName = "CodexLinkBridge"
-$Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -File `"$serverScript`""
 $Trigger = New-ScheduledTaskTrigger -AtLogOn
-$Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Days 365)
+$Settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Days 3650)
 
 try {
     Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -Description "CodexLink Local Bridge Background Service" -Force | Out-Null

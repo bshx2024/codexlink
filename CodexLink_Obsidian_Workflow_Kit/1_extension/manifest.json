@@ -1,13 +1,16 @@
 {
   "manifest_version": 3,
-  "name": "CodexLink",
-  "version": "1.0.0",
-  "description": "浏览器与 Codex 联动插件，完美读取登录与防爬网页内容",
+  "name": "ComLinkAI",
+  "version": "2.0.0",
+  "description": "AI 浏览器自动化操控中转 & 博客评论反链智能助手 & 网页剪藏",
   "permissions": [
     "activeTab",
     "tabs",
+    "tabGroups",
     "scripting",
-    "sidePanel"
+    "sidePanel",
+    "debugger",
+    "storage"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -16,7 +19,7 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "打开 CodexLink 侧边栏"
+    "default_title": "打开 ComLinkAI 侧边栏"
   },
   "side_panel": {
     "default_path": "sidepanel.html"

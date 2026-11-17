@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <!-- 背景圆角渐变 -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0a0e26" />
+      <stop offset="100%" stop-color="#181230" />
+    </linearGradient>
+
+    <!-- 边框发光渐变 -->
+    <linearGradient id="borderGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00f2fe" />
+      <stop offset="50%" stop-color="#8b5cf6" />
+      <stop offset="100%" stop-color="#ec4899" />
+    </linearGradient>
+
+    <!-- 电光青环扣渐变 -->
+    <linearGradient id="cyanGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00f2fe" />
+      <stop offset="100%" stop-color="#4facfe" />
+    </linearGradient>
+
+    <!-- 紫罗兰环扣渐变 -->
+    <linearGradient id="purpleGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#a855f7" />
+      <stop offset="100%" stop-color="#ec4899" />
+    </linearGradient>
+
+    <!-- 核心光晕 Filter -->
+    <filter id="neonGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- 科技底座 (Round Container) -->
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="url(#bgGrad)" stroke="url(#borderGrad)" stroke-width="4" />
+
+  <!-- 1. 电光青锁链环 (Cyan Link 1) -->
+  <path d="M 64,136 A 44,44 0 1,1 152,136 A 44,44 0 0,1 64,136 Z" 
+        fill="none" 
+        stroke="url(#cyanGrad)" 
+        stroke-width="22" 
+        stroke-linecap="round" 
+        filter="url(#neonGlow)" />
+
+  <!-- 2. 紫罗兰互锁链环 (Purple Link 2) -->
+  <path d="M 104,96 A 44,44 0 1,1 192,96 A 44,44 0 0,1 104,96 Z" 
+        fill="none" 
+        stroke="url(#purpleGrad)" 
+        stroke-width="22" 
+        stroke-linecap="round" 
+        filter="url(#neonGlow)" />
+
+  <!-- 3. AI 智能对话/点缀节点 (Pink Speech/AI Node) -->
+  <circle cx="72" cy="72" r="22" fill="#ec4899" filter="url(#neonGlow)" />
+  <circle cx="72" cy="72" r="10" fill="#ffffff" />
+
+  <!-- 4. 右上角 AI 科技星芒 (Sparkle) -->
+  <path d="M 184,48 Q 184,68 204,68 Q 184,68 184,88 Q 184,68 164,68 Q 184,68 184,48 Z" fill="#ffffff" filter="url(#neonGlow)" />
+</svg>

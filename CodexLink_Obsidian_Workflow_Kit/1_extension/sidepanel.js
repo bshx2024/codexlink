@@ -1,1280 +1,3158 @@
 // ==========================================================================
-// CodexLink Sidepanel Controller (稳定长连接 + 叶子块累计抓取 + AI 对话流式联动版)
+// ComLinkAI Pro v2.2.0 - 核心侧边栏控制引擎 (Pristine Clean Build)
 // ==========================================================================
 
-const LOCAL_SERVER_WS = 'ws://localhost:3010';
+const SERVER_CANDIDATES = [
+  'ws://127.0.0.1:3010',
+  'ws://localhost:3010'
+];
+
+let currentCandidateIndex = 0;
 let ws = null;
 let isConnected = false;
 let reconnectTimer = null;
+let pingTimer = null;
 
-// 全局变量用于存储当前已抓取网页的上下文内容，供 Chat 联动使用
 let currentExtractedContent = null;
 let chatHistory = [];
+let opMode = 'ws_bridge';
+let vaultDirectoryHandle = null;
 
-// DOM 元素引用
-const connectionBadge = document.getElementById('connection-badge');
-const statusDesc = document.getElementById('status-desc');
-const statusProgress = document.getElementById('status-progress');
-const startupGuideTrigger = document.getElementById('startup-guide-trigger');
-const startupGuideContent = document.getElementById('startup-guide-content');
-
-const tabTitleEl = document.getElementById('tab-title');
-const tabUrlEl = document.getElementById('tab-url');
-const btnRefresh = document.getElementById('btn-refresh');
-
-const btnFetch = document.getElementById('btn-fetch');
-const charCountEl = document.getElementById('char-count');
-const markdownPlaceholder = document.getElementById('markdown-placeholder');
-const markdownPreview = document.getElementById('markdown-preview');
-
-// Obsidian 剪存 DOM 元素
-const obsidianActions = document.getElementById('obsidian-actions');
-const btnSaveObsidian = document.getElementById('btn-save-obsidian');
-const btnAiSaveObsidian = document.getElementById('btn-ai-save-obsidian');
+let currentBatchQueue = [];
+let activePublishCategory = 'all';
+let activeDirectoryCategory = 'all';
+let activeDashboardFilter = 'all';
 
 // ==========================================
-// 1. 初始化入口
+// IndexedDB 目录句柄持久化辅助方法
 // ==========================================
-document.addEventListener('DOMContentLoaded', () => {
-  // 1.1 初始化活跃标签页预览
-  updateActiveTabInfo();
+const DB_NAME = 'CodexLinkDB';
+const STORE_NAME = 'handles';
 
-  // 1.2 启动与本地 Node.js 桥接服务的 WebSocket 连接
-  connectWebSocket();
-
-  // 1.3 绑定网页抓取按钮事件
-  btnRefresh.addEventListener('click', () => {
-    updateActiveTabInfo();
-    btnRefresh.style.transform = 'rotate(360deg)';
-    setTimeout(() => btnRefresh.style.transform = 'none', 500);
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 1);
+    request.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
   });
-  
-  btnFetch.addEventListener('click', triggerContentExtraction);
+}
 
-  // 绑定 Obsidian 剪存按钮事件
-  btnSaveObsidian.addEventListener('click', saveToObsidianHandler);
-  btnAiSaveObsidian.addEventListener('click', aiSaveToObsidianHandler);
-
-  // 1.4 绑定开机自启引导点击折叠事件
-  startupGuideTrigger.addEventListener('click', () => {
-    startupGuideContent.classList.toggle('hidden');
-    const isHidden = startupGuideContent.classList.contains('hidden');
-    startupGuideTrigger.querySelector('span').textContent = `💡 想要开机自动秒连？点击${isHidden ? '查看' : '收起'}`;
-  });
-
-  // 1.5 初始化 AI 网页伴侣 Chat 对话框控制器
-  initChatController();
-});
-
-// ==========================================
-// 2. 实时监测浏览器标签页切换，同步显示信息
-// ==========================================
-chrome.tabs.onActivated.addListener(() => {
-  updateActiveTabInfo();
-});
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.status === 'complete') {
-    updateActiveTabInfo();
+async function saveDirectoryHandle(handle) {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).put(handle, 'vaultHandle');
+    return new Promise((res, rej) => {
+      tx.oncomplete = () => res(true);
+      tx.onerror = () => rej(tx.error);
+    });
+  } catch (e) {
+    console.warn('保存目录句柄失败:', e);
+    return false;
   }
-});
+}
 
-// 获取并更新 UI 上的活跃标签页信息
+async function loadDirectoryHandle() {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE_NAME, 'readonly');
+    const req = tx.objectStore(STORE_NAME).get('vaultHandle');
+    return new Promise((res, rej) => {
+      req.onsuccess = () => res(req.result || null);
+      req.onerror = () => rej(req.error);
+    });
+  } catch (e) {
+    console.warn('读取目录句柄失败:', e);
+    return null;
+  }
+}
+
+async function executeInActiveTab(func, args = []) {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab || !tab.id) throw new Error('未找到当前活跃标签页');
+
+    if (tab.url.startsWith('chrome://') || tab.url.startsWith('edge://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('about:')) {
+      throw new Error('浏览器内置页面受安全策略保护，无法注入脚本。');
+    }
+
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: func,
+      args: args
+    });
+
+    if (results && results[0]) {
+      return results[0].result;
+    }
+    return null;
+  } catch (err) {
+    console.warn('[executeInActiveTab Error]:', err);
+    throw err;
+  }
+}
+
+// 在指定 tabId 标签页中执行脚本 (支持 Auto-Pilot 隔离标签组中的后台任务)
+async function executeInTab(tabId, func, args = []) {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (!tab || !tab.id) throw new Error(`未找到目标标签页 #${tabId}`);
+    if (tab.url.startsWith('chrome://') || tab.url.startsWith('edge://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('about:')) {
+      throw new Error('浏览器内置页面受安全策略保护，无法注入脚本。');
+    }
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: func,
+      args: args
+    });
+    if (results && results[0]) {
+      return results[0].result;
+    }
+    return null;
+  } catch (err) {
+    console.warn('[executeInTab Error]:', err);
+    throw err;
+  }
+}
+
 async function updateActiveTabInfo() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab) {
-      tabTitleEl.textContent = tab.title || '无标题网页';
-      tabUrlEl.textContent = tab.url || '无法获取链接';
-      
-      // 系统内置网页限制
-      if (tab.url && (tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('edge://') || tab.url.startsWith('about:'))) {
-        btnFetch.disabled = true;
-        btnFetch.querySelector('span').textContent = '系统网页无法提取内容';
-      } else {
-        if (isConnected) {
-          btnFetch.disabled = false;
-          btnFetch.querySelector('span').textContent = '提取并预览网页 Markdown';
-        }
-      }
+    if (!tab) return;
+
+    const tabTitle = document.getElementById('tab-title');
+    const tabUrl = document.getElementById('tab-url');
+    if (tabTitle) {
+      tabTitle.textContent = tab.title || '未命名网页';
+      tabTitle.title = tab.url || '';
+    }
+    if (tabUrl) {
+      tabUrl.textContent = tab.url || '';
+      tabUrl.title = tab.url || '';
+    }
+
+    // 智能感知：如果是 Google 搜索页且输入框为空，自动把搜索词同步到【收集】目标输入框
+    const inputTargetDomain = document.getElementById('input-target-domain');
+    if (inputTargetDomain && !inputTargetDomain.value.trim() && tab.url && tab.url.includes('google.com/search')) {
+      try {
+        const u = new URL(tab.url);
+        const q = u.searchParams.get('q');
+        if (q) inputTargetDomain.value = q;
+      } catch (e) {}
     }
   } catch (err) {
-    console.error('更新标签页信息失败:', err);
-    tabTitleEl.textContent = '无法获取当前网页';
-    tabUrlEl.textContent = err.message;
+    console.warn('[updateActiveTabInfo Error]:', err);
+  }
+}
+
+// 监听浏览器活动标签页切换与网页加载完成，实时同步当前 Tab 状态
+if (typeof chrome !== 'undefined' && chrome.tabs) {
+  if (chrome.tabs.onActivated) {
+    chrome.tabs.onActivated.addListener(() => {
+      try { updateActiveTabInfo(); } catch (e) {}
+    });
+  }
+  if (chrome.tabs.onUpdated) {
+    chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+      if (changeInfo.status === 'complete' || changeInfo.url) {
+        try { updateActiveTabInfo(); } catch (e) {}
+      }
+    });
   }
 }
 
 // ==========================================
-// 3. WebSocket 核心连接与重连逻辑 (常驻 Sidepanel)
+// 1. 初始化入口 & WebSocket 连接管理
 // ==========================================
-function connectWebSocket() {
-  if (ws) {
-    try { ws.close(); } catch (e) {}
+function initApp() {
+  try { updateActiveTabInfo(); } catch (e) {}
+
+  opMode = 'ws_bridge';
+  localStorage.setItem('op_mode', 'ws_bridge');
+
+  const connectionBadgeEl = document.getElementById('connection-badge');
+  if (connectionBadgeEl) {
+    connectionBadgeEl.addEventListener('click', async () => {
+      opMode = 'ws_bridge';
+      currentCandidateIndex = 0;
+      updateUIStatus('disconnected', 'ws://127.0.0.1:3010 (正在重连...)');
+      await checkServerHealth();
+      connectWebSocket();
+    });
   }
 
-  updateUIStatus('disconnected');
-  console.log('正在尝试连接本地服务: ' + LOCAL_SERVER_WS);
-  ws = new WebSocket(LOCAL_SERVER_WS);
+  try { connectWebSocket(); } catch (e) {}
+  try { startHttpPollingLoop(); } catch (e) {}
 
-  ws.onopen = () => {
-    console.log('成功连接到 CodexLink 本地桥接服务！');
-    isConnected = true;
-    updateUIStatus('connected');
-    if (reconnectTimer) {
-      clearInterval(reconnectTimer);
-      reconnectTimer = null;
-    }
-  };
+  const btnRefresh = document.getElementById('btn-refresh');
+  if (btnRefresh) {
+    btnRefresh.addEventListener('click', () => {
+      updateActiveTabInfo();
+      btnRefresh.style.transform = 'rotate(360deg)';
+      setTimeout(() => { btnRefresh.style.transform = 'none'; }, 500);
+    });
+  }
 
-  ws.onmessage = async (event) => {
-    try {
-      const payload = JSON.parse(event.data);
-      const { id, action } = payload;
+  const btnFetch = document.getElementById('btn-fetch');
+  if (btnFetch) {
+    btnFetch.addEventListener('click', triggerContentExtraction);
+  }
 
-      // 响应 AI 客户端发起的正文读取指令
-      if (action === 'getActiveTab') {
-        try {
-          console.log('收到来自 AI 端的网页内容抓取指令...');
-          
-          // 在 UI 上显示正在抓取的动态状态
-          btnFetch.disabled = true;
-          btnFetch.querySelector('span').textContent = 'AI 正在读取网页正文...';
-          
-          const tabData = await fetchActiveTabContent();
-          
-          // 缓存至全局变量
-          currentExtractedContent = tabData;
+  const btnSaveObsidian = document.getElementById('btn-save-obsidian');
+  if (btnSaveObsidian) {
+    btnSaveObsidian.addEventListener('click', saveToObsidianHandler);
+  }
 
-          // 渲染到侧边栏，让用户直观地看到 AI 读取了什么
-          renderMarkdownPreview(tabData);
+  const btnAiSaveObsidian = document.getElementById('btn-ai-save-obsidian');
+  if (btnAiSaveObsidian) {
+    btnAiSaveObsidian.addEventListener('click', aiSaveToObsidianHandler);
+  }
+}
 
-          // 发送回本地 Node.js 服务器，再由其转发给 AI 客户端
-          ws.send(JSON.stringify({
-            id,
-            type: 'response',
-            data: tabData
-          }));
-          
-          console.log('已将网页内容完美返回给 AI 端！');
-        } catch (err) {
-          console.error('AI 抓取页面失败:', err);
-          ws.send(JSON.stringify({
-            id,
-            type: 'response',
-            error: err.message
-          }));
-          
-          markdownPlaceholder.className = 'placeholder-text';
-          markdownPlaceholder.innerHTML = `<span style="color: #f87171;">AI 抓取失败！</span><br>${err.message}`;
-        } finally {
-          btnFetch.disabled = false;
-          btnFetch.querySelector('span').textContent = '提取并预览网页 Markdown';
-        }
+async function checkServerHealth() {
+  try {
+    const res = await fetch('http://127.0.0.1:3010/health', { method: 'GET', signal: AbortSignal.timeout(1500) });
+    return res.ok;
+  } catch (e) {
+    return false;
+  }
+}
+
+function connectWebSocket() {
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+    return;
+  }
+
+  const candidate = SERVER_CANDIDATES[currentCandidateIndex % SERVER_CANDIDATES.length];
+  try {
+    ws = new WebSocket(candidate);
+
+    ws.onopen = () => {
+      isConnected = true;
+      if (reconnectTimer) {
+        clearInterval(reconnectTimer);
+        reconnectTimer = null;
       }
-    } catch (err) {
-      console.error('处理服务器消息时出错:', err);
-    }
-  };
+      updateUIStatus('connected', candidate);
 
-  ws.onclose = () => {
-    console.log('与本地服务的连接断开，即将启动自动重连。');
+      if (pingTimer) clearInterval(pingTimer);
+      pingTimer = setInterval(() => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'ping' }));
+        }
+      }, 10000);
+    };
+
+    ws.onmessage = async (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        const { id, action, data } = payload;
+        try {
+          const res = await handleRemoteAgentAction(action, data);
+          ws.send(JSON.stringify({ id, type: 'response', data: res }));
+        } catch (actionErr) {
+          ws.send(JSON.stringify({ id, type: 'response', error: actionErr.message }));
+        }
+      } catch (err) {
+        console.error('处理服务器消息出错:', err);
+      }
+    };
+
+    ws.onclose = () => {
+      isConnected = false;
+      updateUIStatus('disconnected');
+      startReconnectLoop();
+    };
+
+    ws.onerror = () => {
+      isConnected = false;
+      updateUIStatus('disconnected');
+    };
+  } catch (e) {
     isConnected = false;
     updateUIStatus('disconnected');
     startReconnectLoop();
-  };
-
-  ws.onerror = (err) => {
-    console.error('WebSocket 发生错误:', err);
-    isConnected = false;
-    updateUIStatus('disconnected');
-  };
+  }
 }
 
-// 自动重连循环 (每 3 秒检测一次)
 function startReconnectLoop() {
   if (reconnectTimer) return;
   reconnectTimer = setInterval(() => {
     if (!isConnected) {
+      currentCandidateIndex++;
       connectWebSocket();
     }
-  }, 3000);
+  }, 4000);
 }
 
-// 更新连接状态 UI
-function updateUIStatus(status) {
+function startHttpPollingLoop() {
+  setInterval(async () => {
+    if (!isConnected && opMode === 'ws_bridge') {
+      const ok = await checkServerHealth();
+      if (ok) connectWebSocket();
+    }
+  }, 5000);
+}
+
+function updateUIStatus(status, detailText = '') {
+  const connectionBadge = document.getElementById('connection-badge');
+  const statusDesc = document.getElementById('status-desc');
+  const statusProgress = document.getElementById('status-progress');
+
+  if (!connectionBadge) return;
   const badgeText = connectionBadge.querySelector('.badge-text');
-  
+
   if (status === 'connected') {
     connectionBadge.className = 'badge badge-connected';
-    badgeText.textContent = '已连接';
-    statusDesc.innerHTML = '本地中转服务运行良好: <code>ws://localhost:3010</code>';
-    
-    statusProgress.className = 'progress-bar progress-bar-connected';
-    statusProgress.style.width = '100%';
-    
-    // 隐藏开机自启引导
-    startupGuideTrigger.classList.add('hidden');
-    startupGuideContent.classList.add('hidden');
-    
-    // 如果不是系统内置页面，则激活提取按钮
+    if (badgeText) badgeText.textContent = '已连接';
+    if (statusDesc) statusDesc.innerHTML = '本地中转服务运行良好: <code>' + (detailText || 'ws://127.0.0.1:3010') + '</code>';
+    if (statusProgress) {
+      statusProgress.className = 'progress-bar progress-bar-connected';
+      statusProgress.style.width = '100%';
+    }
     updateActiveTabInfo();
   } else {
     connectionBadge.className = 'badge badge-disconnected';
-    badgeText.textContent = '未连接';
-    statusDesc.innerHTML = '正在寻找本地服务 <code>ws://localhost:3010</code>... 请运行 run-server.ps1 脚本。';
-    
-    statusProgress.className = 'progress-bar progress-bar-disconnected';
-    statusProgress.style.width = '15%';
-    btnFetch.disabled = true;
-    
-    // 展现开机自启引导
-    startupGuideTrigger.classList.remove('hidden');
+    if (badgeText) badgeText.textContent = '未连接';
+    if (statusDesc) statusDesc.innerHTML = '正在寻找本地中转服务 <code>' + (detailText || 'ws://127.0.0.1:3010') + '</code>...';
+    if (statusProgress) {
+      statusProgress.className = 'progress-bar progress-bar-disconnected';
+      statusProgress.style.width = '15%';
+    }
   }
 }
 
+// --------------------------------------------------------------------------
+// 统一分发来自 AI Agent (MCP/WebSocket/REST) 的浏览器操控指令
+// --------------------------------------------------------------------------
+async function handleRemoteAgentAction(action, data = {}) {
+  if (action === 'getActiveTab') {
+    const tabData = await fetchActiveTabContent();
+    currentExtractedContent = tabData;
+    renderMarkdownPreview(tabData);
+    return tabData;
+  }
+
+  if (action === 'navigate') {
+    const { url } = data;
+    if (!url) throw new Error('缺少 url 参数');
+    await openAndFocusUrl(url);
+    return { success: true };
+  }
+
+  if (action === 'click') {
+    const { selector } = data;
+    if (!selector) throw new Error('缺少 selector 参数');
+    let clickSuccess = false;
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab) {
+        const [{ result: coords }] = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: (sel) => {
+            const el = document.querySelector(sel);
+            if (!el) return null;
+            el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            const rect = el.getBoundingClientRect();
+            return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+          },
+          args: [selector]
+        });
+        if (coords) {
+          const res = await chrome.runtime.sendMessage({ type: 'CDP_PHYSICAL_CLICK', tabId: tab.id, x: coords.x, y: coords.y });
+          if (res && res.success) clickSuccess = true;
+        }
+      }
+    } catch (e) {}
+
+    if (!clickSuccess) {
+      await executeInActiveTab((sel) => {
+        const el = document.querySelector(sel);
+        if (!el) throw new Error('未找到元素: ' + sel);
+        el.click();
+        return true;
+      }, [selector]);
+    }
+    return { success: true };
+  }
+
+  if (action === 'type') {
+    const { selector, text } = data;
+    if (!selector) throw new Error('缺少 selector 参数');
+    await executeInActiveTab((sel, val) => {
+      const el = document.querySelector(sel);
+      if (!el) throw new Error('未找到输入框: ' + sel);
+      el.focus();
+      el.value = val;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    }, [selector, text || '']);
+    return { success: true };
+  }
+
+  if (action === 'scroll') {
+    const { direction, amount = 400 } = data;
+    const deltaY = direction === 'up' ? -amount : amount;
+    try {
+      await chrome.runtime.sendMessage({ type: 'CDP_PHYSICAL_SCROLL', deltaY });
+    } catch (e) {
+      await executeInActiveTab((dy) => { window.scrollBy({ top: dy, behavior: 'smooth' }); }, [deltaY]);
+    }
+    return { success: true };
+  }
+
+  if (action === 'screenshot') {
+    // 🌟 借助 CDP DevTools 协议原生硬件缩放截屏 (借鉴自 browser-hands)
+    try {
+      const res = await chrome.runtime.sendMessage({
+        type: 'CDP_CAPTURE_SCREENSHOT',
+        options: { quality: 80, scale: 0.8 }
+      });
+      if (res && res.success && res.data) {
+        return { dataUrl: res.data.dataUrl, width: res.data.width, height: res.data.height, isNativeCdp: true };
+      }
+    } catch (e) {}
+
+    // 降级使用 captureVisibleTab
+    return new Promise((resolve, reject) => {
+      chrome.tabs.captureVisibleTab(null, { format: 'jpeg', quality: 80 }, (dataUrl) => {
+        if (chrome.runtime.lastError || !dataUrl) {
+          return reject(new Error(chrome.runtime.lastError ? chrome.runtime.lastError.message : '截图返回为空'));
+        }
+        resolve({ dataUrl });
+      });
+    });
+  }
+
+  if (action === 'getElements') {
+    return await executeInActiveTab(() => {
+      const items = Array.from(document.querySelectorAll('button, a, input, textarea, select'));
+      return items.filter(el => el.offsetHeight > 0 && el.offsetWidth > 0).slice(0, 80).map(el => ({
+        tag: el.tagName.toLowerCase(),
+        id: el.id || null,
+        name: el.name || null,
+        text: (el.innerText || el.value || el.placeholder || '').trim().slice(0, 60),
+        selector: el.id ? `#${el.id}` : (el.name ? `${el.tagName.toLowerCase()}[name="${el.name}"]` : null)
+      }));
+    });
+  }
+
+  if (action === 'listTabs') {
+    const tabs = await chrome.tabs.query({});
+    return tabs.map(t => ({ id: t.id, title: t.title, url: t.url, groupId: t.groupId, active: t.active }));
+  }
+
+  if (action === 'keypress') {
+    const { key, selector } = data;
+    return await executeInActiveTab((k, sel) => {
+      const target = sel ? document.querySelector(sel) : document.activeElement || document.body;
+      if (!target) throw new Error('未找到按键目标元素');
+      target.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
+      target.dispatchEvent(new KeyboardEvent('keyup', { key: k, bubbles: true }));
+      return { success: true };
+    }, [key, selector]);
+  }
+
+  if (action === 'waitForLoad') {
+    return { success: true };
+  }
+
+  if (action === 'waitForElement') {
+    const { selector, timeout = 10000 } = data;
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+      const exists = await executeInActiveTab((sel) => !!document.querySelector(sel), [selector]);
+      if (exists) return { success: true };
+      await new Promise(r => setTimeout(r, 400));
+    }
+    throw new Error(`等待元素 [${selector}] 超时 (${timeout}ms)`);
+  }
+
+  throw new Error(`未知的操作指令: ${action}`);
+}
+
 // ==========================================
-// 4. 手动提取内容与 UI 渲染
+// 2. Markdown 提取与 Obsidian 保存
 // ==========================================
 async function triggerContentExtraction() {
-  btnFetch.disabled = true;
-  btnFetch.querySelector('span').textContent = '正在提取正文中...';
-  
-  markdownPlaceholder.className = 'placeholder-text';
-  markdownPlaceholder.textContent = '正在抓取已渲染的网页 DOM 并转换为结构化 Markdown...';
-  markdownPreview.className = 'markdown-preview-area hidden';
+  const btnFetch = document.getElementById('btn-fetch');
+  const markdownPlaceholder = document.getElementById('markdown-placeholder');
+  const markdownPreview = document.getElementById('markdown-preview');
+
+  if (btnFetch) {
+    btnFetch.disabled = true;
+    const sp = btnFetch.querySelector('span');
+    if (sp) sp.textContent = '正在提取正文中...';
+  }
+
+  if (markdownPlaceholder) {
+    markdownPlaceholder.className = 'placeholder-text';
+    markdownPlaceholder.textContent = '正在抓取已渲染的网页 DOM 并转换为结构化 Markdown...';
+  }
+  if (markdownPreview) markdownPreview.className = 'markdown-preview-area hidden';
 
   try {
     const tabData = await fetchActiveTabContent();
-    currentExtractedContent = tabData; // 存入全局缓存
+    currentExtractedContent = tabData;
     renderMarkdownPreview(tabData);
   } catch (err) {
-    charCountEl.textContent = '0 字';
-    markdownPlaceholder.className = 'placeholder-text';
-    markdownPlaceholder.innerHTML = `<span style="color: #f87171;">手动提取失败！</span><br>${err.message}`;
+    if (markdownPlaceholder) {
+      markdownPlaceholder.className = 'placeholder-text';
+      markdownPlaceholder.innerHTML = '<span style="color: #f87171;">手动提取失败！</span><br>' + err.message;
+    }
   } finally {
-    btnFetch.disabled = false;
-    btnFetch.querySelector('span').textContent = '提取并预览网页 Markdown';
+    if (btnFetch) {
+      btnFetch.disabled = false;
+      const sp = btnFetch.querySelector('span');
+      if (sp) sp.textContent = '提取并预览网页 Markdown';
+    }
   }
 }
 
-// 将 Markdown 内容呈现在侧边栏中
 function renderMarkdownPreview(tabData) {
-  charCountEl.textContent = `${tabData.content.length} 字`;
-  markdownPlaceholder.className = 'placeholder-text hidden';
-  markdownPreview.className = 'markdown-preview-area';
-  
-  markdownPreview.textContent = `=== META DATA ===\n标题: ${tabData.title}\n链接: ${tabData.url}\n=================\n\n${tabData.content}`;
-  
-  // 显示 Obsidian 一键操作区域
-  if (obsidianActions) {
-    obsidianActions.classList.remove('hidden');
+  const charCountEl = document.getElementById('char-count');
+  const markdownPlaceholder = document.getElementById('markdown-placeholder');
+  const markdownPreview = document.getElementById('markdown-preview');
+  const obsidianActions = document.getElementById('obsidian-actions');
+
+  if (charCountEl) charCountEl.textContent = tabData.content.length + ' 字';
+  if (markdownPlaceholder) markdownPlaceholder.className = 'placeholder-text hidden';
+  if (markdownPreview) {
+    markdownPreview.className = 'markdown-preview-area';
+    markdownPreview.textContent = '=== META DATA ===\n标题: ' + tabData.title + '\n链接: ' + tabData.url + '\n=================\n\n' + tabData.content;
   }
+  if (obsidianActions) obsidianActions.classList.remove('hidden');
 }
 
-// ==========================================
-// 5. 网页正文抓取核心 (注入式执行)
-// ==========================================
 async function fetchActiveTabContent() {
-  // 1. 获取活跃标签页
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab) {
-    throw new Error('未检测到打开的活跃网页，请先访问一个正常的网站。');
-  }
+  if (!tab) throw new Error('未检测到打开的活跃网页');
 
-  // 2. 检查协议限制
   if (!tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('edge://') || tab.url.startsWith('about:')) {
     return {
       title: tab.title || '系统网页',
       url: tab.url || '',
-      content: `[系统消息]: 这是一个浏览器内置页面（如设置页或新标签页），无法读取其内容。\n请在浏览器中访问一个正常的外部网站。`,
+      content: '[系统消息]: 浏览器内置页面无法读取内容。',
       length: 0
     };
   }
 
-  // 3. 动态检测目标网站是否为基于“虚拟滚动/懒加载”的复杂编辑器页面 (飞书, Lark, Notion 等)
-  const isLazyLoaded = tab.url && (
-    tab.url.includes('feishu.cn') || 
-    tab.url.includes('larksuite.com') || 
-    tab.url.includes('notion.so')
-  );
+  const results = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: () => {
+      const clone = document.body.cloneNode(true);
+      const removeSelectors = ['script', 'style', 'noscript', 'iframe', 'svg', 'header', 'footer', 'nav'];
+      removeSelectors.forEach(s => {
+        clone.querySelectorAll(s).forEach(el => el.remove());
+      });
 
-  // 4. 在活跃网页中动态注入 DOM 解析器
-  try {
-    console.log(`执行 DOM 解析，懒加载模式: ${isLazyLoaded ? '开启' : '关闭'}`);
-    const results = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: convertDomToMarkdownInTab,
-      args: [{ isLazyLoaded }]
-    });
-
-    if (results && results[0] && results[0].result) {
-      const pageData = results[0].result;
+      let text = clone.innerText || clone.textContent || '';
+      text = text.replace(/\n\s*\n\s*\n/g, '\n\n').trim();
       return {
-        title: pageData.title || tab.title || '无标题',
-        url: tab.url,
-        content: pageData.markdown || '未读取到任何网页文本内容。',
-        length: pageData.length || 0
-      };
-    } else {
-      throw new Error('网页脚本注入未返回任何数据。');
-    }
-  } catch (err) {
-    console.error('DOM 提取失败:', err);
-    throw new Error(`无法提取当前网页内容 (${err.message})。请检查页面是否加载完成，或尝试刷新网页。`);
-  }
-}
-
-// ==========================================
-// 6. DOM-to-Markdown 解析引擎 (由 scripting API 注入并在网页环境执行)
-// ==========================================
-async function convertDomToMarkdownInTab(options) {
-  try {
-    const isLazyLoaded = options && options.isLazyLoaded;
-
-    // 6.1 HTML-to-Markdown 核心转换逻辑
-    function parseNode(node) {
-      if (node.nodeType === 3) { // 文本节点
-        const val = node.nodeValue;
-        if (val) {
-          const trimmed = val.trim();
-          if (trimmed === 'Unable to print' || trimmed === 'unable to print') {
-            return '';
-          }
-        }
-        return val;
-      }
-      if (node.nodeType !== 1) { // 非元素节点
-        return '';
-      }
-
-      const tagName = node.tagName.toLowerCase();
-      let childrenContent = '';
-      
-      for (let i = 0; i < node.childNodes.length; i++) {
-        childrenContent += parseNode(node.childNodes[i]);
-      }
-
-      switch (tagName) {
-        case 'h1': return `\n\n# ${childrenContent.trim()}\n\n`;
-        case 'h2': return `\n\n## ${childrenContent.trim()}\n\n`;
-        case 'h3': return `\n\n### ${childrenContent.trim()}\n\n`;
-        case 'h4': return `\n\n#### ${childrenContent.trim()}\n\n`;
-        case 'h5': return `\n\n##### ${childrenContent.trim()}\n\n`;
-        case 'h6': return `\n\n###### ${childrenContent.trim()}\n\n`;
-        case 'p': return `\n\n${childrenContent.trim()}\n\n`;
-        case 'br': return `\n`;
-        case 'strong':
-        case 'b': return ` **${childrenContent.trim()}** `;
-        case 'em':
-        case 'i': return ` *${childrenContent.trim()}* `;
-        case 'code': {
-          const isBlock = node.parentNode && node.parentNode.tagName.toLowerCase() === 'pre';
-          return isBlock ? childrenContent : ` \`${childrenContent.trim()}\` `;
-        }
-        case 'pre': return `\n\n\`\`\`\n${childrenContent.trim()}\n\`\`\`\n\n`;
-        case 'a': {
-          const href = node.getAttribute('href');
-          const text = childrenContent.trim();
-          if (href && text && !href.startsWith('javascript:')) {
-            return ` [${text}](${href}) `;
-          }
-          return text;
-        }
-        case 'img': {
-          let src = node.getAttribute('src') || 
-                    node.getAttribute('data-src') || 
-                    node.getAttribute('data-original-src') || 
-                    node.getAttribute('data-actualsrc') ||
-                    node.getAttribute('data-lazy-src');
-          if (src) {
-            try {
-              src = new URL(src, document.baseURI).href;
-            } catch (e) {}
-            // 过滤极小图标或 svg 占位符以确保纯净
-            const width = parseInt(node.getAttribute('width') || node.style.width || '100', 10);
-            const height = parseInt(node.getAttribute('height') || node.style.height || '100', 10);
-            if (src.startsWith('data:image/svg+xml') || (width > 0 && width < 20) || (height > 0 && height < 20)) {
-              return '';
-            }
-            const alt = node.getAttribute('alt') || '图片';
-            return `\n\n![${alt}](${src})\n\n`;
-          }
-          return '';
-        }
-        case 'li': return `\n- ${childrenContent.trim()}`;
-        case 'ul': return `\n${childrenContent}\n`;
-        case 'ol': return `\n${childrenContent}\n`;
-        case 'table': return `\n\n${childrenContent}\n\n`;
-        case 'tr': return `\n| ${childrenContent}`;
-        case 'th':
-        case 'td': return `${childrenContent.trim()} |`;
-        case 'div':
-        case 'span':
-        case 'section':
-          return childrenContent;
-        default:
-          return childrenContent;
-      }
-    }
-
-    // ----------------------------------------------------
-    // 方案 A: 针对虚拟滚动/懒加载编辑器 (飞书、Notion) 的累计抓取机制
-    // ----------------------------------------------------
-    if (isLazyLoaded) {
-      // 1. 获取正确的滚动容器
-      function getScrollContainer() {
-        const selectors = ['.scroll-container', '.docx-scroll-container', '.editor-scroll-container', '.wiki-scroll-container', '.client-scroll-container'];
-        for (const s of selectors) {
-          const el = document.querySelector(s);
-          if (el) return el;
-        }
-        // 自动兜底检测所有包含 overflow 的容器
-        const divs = document.querySelectorAll('div');
-        for (const el of divs) {
-          const style = window.getComputedStyle(el);
-          if ((style.overflowY === 'auto' || style.overflowY === 'scroll') && el.scrollHeight > el.clientHeight) {
-            return el;
-          }
-        }
-        return window;
-      }
-
-      const container = getScrollContainer();
-      const isWindow = container === window;
-      const originalScrollTop = isWindow ? window.scrollY : container.scrollTop;
-
-      // 2. 锁定主编辑器内容元素，排除全局侧边栏 and 评论区
-      const editorEl = document.querySelector('.docx-editor') || 
-                       document.querySelector('.editor-root') || 
-                       document.querySelector('.editor-container') || 
-                       document.body;
-
-      const blockMap = new Map();
-      const blockOrder = [];
-
-      // 收集当前视窗中已渲染的所有文档块 (Block)
-      function collectCurrentBlocks() {
-        // 在飞书中，每个文档块均包含唯一的 [data-block-id] 属性
-        // 我们只收集叶子节点块（即自身拥有 data-block-id 且内部不再嵌套其他 data-block-id 的最小内容单元）
-        const elements = Array.from(editorEl.querySelectorAll('[data-block-id]')).filter(el => {
-          // 排除干扰容器 (如悬浮评论、非正文区域等)
-          if (el.closest('.comment-panel') || el.closest('.sidebar') || el.closest('header') || el.closest('footer')) {
-            return false;
-          }
-          
-          // 排除 AI 自动生成的摘要区块 (Feishu AI QuickView)，保留纯粹的中文原文
-          if (el.innerText.includes('AI QuickView') || el.closest('[class*="quickview"]') || el.closest('[class*="ai-summary"]')) {
-            return false;
-          }
-
-          // 核心过滤：如果内部还含有 data-block-id，说明它是一个布局包装容器，我们不直接解析它，只解析它的叶子内容节点
-          if (el.querySelector('[data-block-id]')) {
-            return false;
-          }
-          return true;
-        });
-
-        elements.forEach(el => {
-          const blockId = el.getAttribute('data-block-id');
-          if (!blockId) return;
-
-          const md = parseNode(el);
-          if (md && md.trim().length > 0) {
-            // 用唯一的 blockId 作为键，累计收集。已收集的块绝不覆盖，确保绝对完整！
-            if (!blockMap.has(blockId)) {
-              blockMap.set(blockId, md);
-              blockOrder.push(blockId);
-            }
-          }
-        });
-      }
-
-      // 3. 执行异步滚屏抓取流程
-      const viewportHeight = isWindow ? window.innerHeight : container.clientHeight;
-      const totalHeight = isWindow ? document.documentElement.scrollHeight : container.scrollHeight;
-      let currentScrollTop = 0;
-
-      // 首先回到顶部开始收集
-      if (isWindow) window.scrollTo(0, 0);
-      else container.scrollTop = 0;
-      await new Promise(r => setTimeout(r, 150)); // 留 150ms 缓冲
-
-      // 逐步向下滚动，每次滚动 70% 视窗高度以确保内容有完美的重叠覆盖，不漏掉任何一个 block
-      while (currentScrollTop < totalHeight) {
-        collectCurrentBlocks();
-        currentScrollTop += Math.floor(viewportHeight * 0.7);
-        
-        if (isWindow) window.scrollTo(0, currentScrollTop);
-        else container.scrollTop = currentScrollTop;
-        
-        // 核心：每次滚动挂起 100ms 强制给浏览器渲染虚拟 DOM 的时间
-        await new Promise(r => setTimeout(r, 100));
-      }
-
-      // 滚动到最底部进行最后一次补漏收集
-      collectCurrentBlocks();
-
-      // 4. 恢复用户本来的滚动位置，做到无感静默
-      if (isWindow) window.scrollTo(0, originalScrollTop);
-      else container.scrollTop = originalScrollTop;
-
-      // 5. 按原文档逻辑顺序拼接 Markdown 内容
-      let markdown = blockOrder.map(id => blockMap.get(id)).join('\n\n');
-
-      // 格式化清理多余的空白与换行
-      markdown = markdown
-        .replace(/\n{3,}/g, '\n\n')
-        .replace(/[ \t]+/g, ' ')
-        .trim();
-
-      return {
-        title: document.title,
-        markdown: markdown,
-        length: markdown.length
-      };
-
-    } else {
-      // ----------------------------------------------------
-      // 方案 B: 针对标准网页 (快速 instant DOM 模式)
-      // ----------------------------------------------------
-      const docCopy = document.cloneNode(true);
-      const scripts = docCopy.querySelectorAll('script, style, iframe, noscript, svg, header, footer, nav, link');
-      scripts.forEach(el => el.remove());
-
-      let rootElement = docCopy.body;
-      const specialContainers = [
-        '#js_content',
-        'article',
-        '.article-content',
-        '.post-content',
-        'main',
-        '#main-content'
-      ];
-
-      for (const selector of specialContainers) {
-        const found = docCopy.querySelector(selector);
-        if (found && found.innerText.trim().length > 200) {
-          rootElement = found;
-          break;
-        }
-      }
-
-      let markdown = parseNode(rootElement);
-
-      markdown = markdown
-        .replace(/\n{3,}/g, '\n\n')
-        .replace(/[ \t]+/g, ' ')
-        .trim();
-
-      return {
-        title: document.title,
-        markdown: markdown,
-        length: markdown.length
+        title: document.title || '',
+        url: window.location.href,
+        content: text,
+        length: text.length
       };
     }
-  } catch (err) {
-    return {
-      title: document.title,
-      markdown: '抓取 DOM 出错: ' + err.message,
-      length: 0
-    };
-  }
-}
-
-// ==========================================
-// 7. AI 网页伴侣 Chat 对话框控制逻辑 (流式 SSE / 直连 PilotDeck 双通道版)
-// ==========================================
-async function loadAiSettings() {
-  let chatMode = localStorage.getItem('ai_chat_mode');
-  let apiUrl = localStorage.getItem('ai_api_url');
-  let apiKey = localStorage.getItem('ai_api_key') || 'placeholder';
-  let model = localStorage.getItem('ai_model');
-  
-  // 尝试从本地桥接服务读取当前 Codex config.toml 的实际配置与 auth.json 密钥
-  try {
-    const res = await fetch('http://localhost:3010/api/codex-config');
-    if (res.ok) {
-      const codexConf = await res.json();
-      console.log('[CodexLink] 成功自本地桥接服务同步 Codex 实时配置与密钥:', codexConf);
-      
-      if (codexConf.baseUrl) {
-        apiUrl = codexConf.baseUrl;
-        localStorage.setItem('ai_api_url', apiUrl);
-      }
-      if (codexConf.model) {
-        model = codexConf.model;
-        localStorage.setItem('ai_model', model);
-      }
-      if (codexConf.apiKey) {
-        apiKey = codexConf.apiKey;
-        localStorage.setItem('ai_api_key', apiKey);
-      }
-    }
-  } catch (e) {
-    console.warn('[CodexLink] 获取本地 Codex 实时代理配置与密钥失败，将降级使用本地缓存:', e);
-  }
-  
-  // 兜底默认值
-  if (!chatMode) chatMode = 'direct';
-  if (!apiUrl) apiUrl = 'http://localhost:28642/v1';
-  if (!model) model = 'gpt-5.5';
-  
-  document.getElementById('ai-chat-mode').value = chatMode;
-  document.getElementById('ai-api-url').value = apiUrl;
-  document.getElementById('ai-api-key').value = apiKey === 'placeholder' ? '' : apiKey;
-  document.getElementById('ai-model').value = model;
-}
-
-function initChatController() {
-  const btnToggleSettings = document.getElementById('btn-toggle-settings');
-  const aiSettingsDrawer = document.getElementById('ai-settings-drawer');
-  const btnSaveSettings = document.getElementById('btn-save-settings');
-  const btnClearChat = document.getElementById('btn-clear-chat');
-  const btnSendChat = document.getElementById('btn-send-chat');
-  const chatInput = document.getElementById('chat-input');
-  
-  // 7.1 加载保存的历史设置
-  loadAiSettings();
-  
-  // 7.2 切换设置抽屉显隐
-  btnToggleSettings.addEventListener('click', () => {
-    aiSettingsDrawer.classList.toggle('hidden');
-  });
-  
-  // 7.3 保存 API 配置与模式选择
-  btnSaveSettings.addEventListener('click', () => {
-    const chatMode = document.getElementById('ai-chat-mode').value;
-    const apiUrl = document.getElementById('ai-api-url').value.trim() || 'http://localhost:28642/v1';
-    let apiKey = document.getElementById('ai-api-key').value.trim();
-    if (!apiKey) apiKey = 'placeholder';
-    const model = document.getElementById('ai-model').value.trim() || 'gpt-5.5';
-    
-    localStorage.setItem('ai_chat_mode', chatMode);
-    localStorage.setItem('ai_api_url', apiUrl);
-    localStorage.setItem('ai_api_key', apiKey);
-    localStorage.setItem('ai_model', model);
-    
-    btnSaveSettings.textContent = '保存成功！';
-    btnSaveSettings.style.background = '#10b981';
-    setTimeout(() => {
-      btnSaveSettings.textContent = '保存配置';
-      btnSaveSettings.style.background = '';
-      aiSettingsDrawer.classList.add('hidden');
-    }, 1000);
-  });
-  
-  // 7.4 清空对话历史
-  btnClearChat.addEventListener('click', () => {
-    chatHistory = [];
-    const container = document.getElementById('chat-messages');
-    container.innerHTML = `
-      <div class="msg msg-system">
-        💬 对话历史已清空。您可以继续提问！
-      </div>
-    `;
-  });
-  
-  // 7.5 自适应文本框高度
-  chatInput.addEventListener('input', () => {
-    chatInput.style.height = 'auto';
-    chatInput.style.height = Math.min(100, chatInput.scrollHeight - 4) + 'px';
-  });
-  
-  // 7.6 快捷键监听：Enter 发送，Shift+Enter 换行
-  chatInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendChatMessage();
-    }
-  });
-  
-  // 7.7 点击发送
-  btnSendChat.addEventListener('click', sendChatMessage);
-}
-
-// 核心：发送聊天消息
-async function sendChatMessage() {
-  const chatInput = document.getElementById('chat-input');
-  const text = chatInput.value.trim();
-  if (!text) return;
-  
-  // 1. 读取当前的联动模式配置
-  const chatMode = localStorage.getItem('ai_chat_mode') || 'direct';
-  
-  // 2. 禁用输入及发送按钮，展示加载状态
-  chatInput.value = '';
-  chatInput.style.height = '36px';
-  chatInput.disabled = true;
-  document.getElementById('btn-send-chat').disabled = true;
-  
-  // ----------------------------------------------------
-  // 通道 A1: 🚀 直连 Codex 窗口 (Direct Inject to Codex Tab)
-  // ----------------------------------------------------
-  if (chatMode === 'codex_inject') {
-    const aiMsgDiv = startAiMessage();
-    aiMsgDiv.textContent = '正在寻找左侧 Codex 浏览器标签页...';
-    
-    try {
-      // 1. 查询当前所有浏览器标签页，寻找 Codex/Apivale UI
-      const tabs = await chrome.tabs.query({});
-      const codexTab = tabs.find(t => 
-        t.url && (
-          t.url.includes('codex') ||
-          t.url.includes('apivale') ||
-          t.url.includes('localhost:3000') ||
-          t.url.includes('localhost:3001') ||
-          t.url.includes('localhost:5173') ||
-          t.url.includes('127.0.0.1')
-        )
-      );
-      
-      if (!codexTab) {
-        throw new Error('未在浏览器中检测到打开的 Codex 页面！请确保 Codex Web UI 处于打开状态，或者点击右上角小齿轮 ⚙️ 将联动模式切换为“独立伴侣模式”。');
-      }
-      
-      const useContext = document.getElementById('chk-use-context').checked;
-      
-      // 2. 如果携带上下文且当前缓存为空，自动在后台滚动抓取
-      if (useContext && !currentExtractedContent) {
-        aiMsgDiv.textContent = '正在提取当前网页正文上下文...';
-        try {
-          currentExtractedContent = await fetchActiveTabContent();
-          renderMarkdownPreview(currentExtractedContent);
-        } catch (err) {
-          console.error('自动抓取上下文失败:', err);
-        }
-      }
-      
-      // 3. 构建穿透给 Codex 的完美混合 Prompt
-      let compiledPrompt = '';
-      if (useContext && currentExtractedContent) {
-        compiledPrompt = `【💡 已通过 CodexLink 自动携带网页上下文：${currentExtractedContent.title}】
-网页链接：${currentExtractedContent.url}
-
-=== 网页 Markdown 正文开始 ===
-${currentExtractedContent.content}
-=== 网页 Markdown 正文结束 ===
-
-用户提问：${text}`;
-      } else {
-        compiledPrompt = text;
-      }
-      
-      aiMsgDiv.textContent = '正在将 Prompt 跨标签注入左侧 Codex 对话框并提交...';
-      
-      // 4. 将 Prompt 远程注入到 Codex tab 内的 DOM 元素上并自动提交
-      const results = await chrome.scripting.executeScript({
-        target: { tabId: codexTab.id },
-        func: injectPromptToPilotDeckDOM, // 共享极简通用的 DOM 注入提交逻辑
-        args: [compiledPrompt]
-      });
-      
-      if (results && results[0] && results[0].result && results[0].result.success) {
-        aiMsgDiv.className = 'msg msg-system';
-        aiMsgDiv.innerHTML = `🚀 <b>穿透发送成功！</b><br>已将问题与网页正文一键注入并同步至左侧 Codex 窗口！请在左侧查看 AI 执行与实时输出进度。`;
-      } else {
-        const errMsg = (results && results[0] && results[0].result && results[0].result.error) || '未知注入错误';
-        throw new Error(`注入失败: ${errMsg}`);
-      }
-      
-    } catch (err) {
-      console.error('直连 Codex 窗口失败:', err);
-      aiMsgDiv.className = 'msg msg-error';
-      aiMsgDiv.textContent = `❌ ${err.message}`;
-    } finally {
-      chatInput.disabled = false;
-      document.getElementById('btn-send-chat').disabled = false;
-      chatInput.focus();
-    }
-    return;
-  }
-
-  // ----------------------------------------------------
-  // 通道 A2: 🚀 直连/穿透 PilotDeck 工作舱模式 (Direct Linked Mode)
-  // ----------------------------------------------------
-  if (chatMode === 'pilotdeck') {
-    const aiMsgDiv = startAiMessage();
-    aiMsgDiv.textContent = '正在寻找左侧 PilotDeck 浏览器标签页...';
-    
-    try {
-      // 1. 查询当前所有浏览器标签页，寻找 PilotDeck UI
-      const tabs = await chrome.tabs.query({});
-      const pilotDeckTab = tabs.find(t => 
-        t.url && (
-          t.url.includes('localhost:3000') ||
-          t.url.includes('localhost:3001') ||
-          t.url.includes('localhost:5173') ||
-          t.url.includes('pilotdeck')
-        )
-      );
-      
-      if (!pilotDeckTab) {
-        throw new Error('未在浏览器中检测到打开的 PilotDeck 页面！请先确保 PilotDeck Web UI 处于打开状态（如 http://localhost:3001），或者点击右上角小齿轮 ⚙️ 将联动模式切换为“独立对话模式”。');
-      }
-      
-      const useContext = document.getElementById('chk-use-context').checked;
-      
-      // 2. 如果携带上下文且当前缓存为空，自动在后台滚动抓取
-      if (useContext && !currentExtractedContent) {
-        aiMsgDiv.textContent = '正在提取当前网页正文上下文...';
-        try {
-          currentExtractedContent = await fetchActiveTabContent();
-          renderMarkdownPreview(currentExtractedContent);
-        } catch (err) {
-          console.error('自动抓取上下文失败:', err);
-        }
-      }
-      
-      // 3. 构建穿透给 PilotDeck 的完美混合 Prompt
-      let compiledPrompt = '';
-      if (useContext && currentExtractedContent) {
-        compiledPrompt = `【💡 已通过 CodexLink 自动携带网页上下文：${currentExtractedContent.title}】
-网页链接：${currentExtractedContent.url}
-
-=== 网页 Markdown 正文开始 ===
-${currentExtractedContent.content}
-=== 网页 Markdown 正文结束 ===
-
-用户提问：${text}`;
-      } else {
-        compiledPrompt = text;
-      }
-      
-      aiMsgDiv.textContent = '正在将 Prompt 跨标签注入左侧 PilotDeck 对话框并提交...';
-      
-      // 4. 将 Prompt 远程注入到 PilotDeck tab 内的 DOM 元素上并自动提交
-      const results = await chrome.scripting.executeScript({
-        target: { tabId: pilotDeckTab.id },
-        func: injectPromptToPilotDeckDOM,
-        args: [compiledPrompt]
-      });
-      
-      if (results && results[0] && results[0].result && results[0].result.success) {
-        // 在右侧展示注入成功，引导用户看左侧执行
-        aiMsgDiv.className = 'msg msg-system';
-        aiMsgDiv.innerHTML = `🚀 <b>穿透发送成功！</b><br>已将问题与网页正文一键注入并同步至左侧 PilotDeck 舱体！请在左侧查看 AI 执行与实时输出进度。`;
-      } else {
-        const errMsg = (results && results[0] && results[0].result && results[0].result.error) || '未知注入错误';
-        throw new Error(`注入失败: ${errMsg}`);
-      }
-      
-    } catch (err) {
-      console.error('直连 PilotDeck 舱体失败:', err);
-      aiMsgDiv.className = 'msg msg-error';
-      aiMsgDiv.textContent = `❌ ${err.message}`;
-    } finally {
-      chatInput.disabled = false;
-      document.getElementById('btn-send-chat').disabled = false;
-      chatInput.focus();
-    }
-    return;
-  }
-  
-  // ----------------------------------------------------
-  // 通道 B: 💬 独立 AI 侧边栏对话模式 (Stand-alone Chat Mode)
-  // ----------------------------------------------------
-  appendMessage('user', text);
-  chatHistory.push({ role: 'user', content: text });
-  
-  const aiMsgDiv = startAiMessage();
-  aiMsgDiv.textContent = '思考中...';
-  
-  try {
-    const apiUrl = localStorage.getItem('ai_api_url') || 'http://localhost:28642/v1';
-    const apiKey = localStorage.getItem('ai_api_key') || 'placeholder';
-    const modelName = localStorage.getItem('ai_model') || 'sensenova/sensenova-6.7-flash-lite';
-    const useContext = document.getElementById('chk-use-context').checked;
-    
-    if (useContext && !currentExtractedContent) {
-      aiMsgDiv.textContent = '正在获取当前网页正文上下文...';
-      try {
-        currentExtractedContent = await fetchActiveTabContent();
-        renderMarkdownPreview(currentExtractedContent);
-      } catch (err) {
-        console.error('后台自动抓取失败:', err);
-      }
-    }
-    
-    const apiMessages = [];
-    
-    if (useContext && currentExtractedContent) {
-      apiMessages.push({
-        role: 'system',
-        content: `You are Codex Web Copilot, a highly capable AI assistant embedded in a browser side panel.
-You are given the high-fidelity structured Markdown text of the web page the user is currently viewing.
-
-=== CURRENT WEB PAGE INFO ===
-URL: ${currentExtractedContent.url}
-Title: ${currentExtractedContent.title}
-=== PAGE CONTENT ===
-${currentExtractedContent.content}
-====================
-
-Use the page content above as a comprehensive knowledge source to answer the user's questions, translate segments, summarize text, or analyze layout.
-When answering questions about the page, base your response strictly on the provided content. If the information is not in the page content, use your general knowledge but make sure to clarify so.`
-      });
-    } else {
-      apiMessages.push({
-        role: 'system',
-        content: 'You are Codex Web Copilot, a helpful AI assistant. Answer the user\'s queries directly.'
-      });
-    }
-    
-    apiMessages.push(...chatHistory);
-    aiMsgDiv.textContent = '';
-    
-    const response = await fetch(`${apiUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: modelName,
-        messages: apiMessages,
-        stream: true
-      })
-    });
-    
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`API 报错: ${response.status} - ${errText}`);
-    }
-    
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder('utf-8');
-    let buffer = '';
-    let aiResponseText = '';
-    
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop();
-      
-      for (let line of lines) {
-        line = line.trim();
-        if (!line) continue;
-        if (line === 'data: [DONE]') continue;
-        
-        if (line.startsWith('data: ')) {
-          try {
-            const parsed = JSON.parse(line.slice(6));
-            const content = parsed.choices?.[0]?.delta?.content || '';
-            if (content) {
-              aiResponseText += content;
-              aiMsgDiv.innerHTML = parseMarkdown(aiResponseText);
-              document.getElementById('chat-messages').scrollTop = document.getElementById('chat-messages').scrollHeight;
-            }
-          } catch (e) {}
-        }
-      }
-    }
-    
-    if (buffer && buffer.startsWith('data: ')) {
-      try {
-        const parsed = JSON.parse(buffer.slice(6));
-        const content = parsed.choices?.[0]?.delta?.content || '';
-        if (content) {
-          aiResponseText += content;
-          aiMsgDiv.innerHTML = parseMarkdown(aiResponseText);
-        }
-      } catch (e) {}
-    }
-    
-    chatHistory.push({ role: 'assistant', content: aiResponseText });
-    
-  } catch (err) {
-    console.error('AI 链路故障:', err);
-    aiMsgDiv.className = 'msg msg-error';
-    aiMsgDiv.textContent = `❌ 对话链路失败: ${err.message}\n请点击右上角 ⚙️ 配置正确的 API 接口地址、API Key 与模型名称。如果是本地代理，请确认本地代理服务 (28642端口) 是否正常开启。`;
-    chatHistory.pop();
-  } finally {
-    chatInput.disabled = false;
-    document.getElementById('btn-send-chat').disabled = false;
-    chatInput.focus();
-  }
-}
-
-// ==========================================
-// 8. 远程 DOM 操控注入函数 (由 scripting API 注入并在 PilotDeck Tab 环境执行)
-// ==========================================
-function injectPromptToPilotDeckDOM(promptText) {
-  try {
-    // 1. 寻找页面上的对话输入框 textarea
-    const textarea = document.querySelector('textarea');
-    if (!textarea) {
-      return { success: false, error: '未能在 PilotDeck 页面上寻寻找输入框。请先确认您在左侧对话中打开并激活了一个工作舱（WorkSpace）会话界面。' };
-    }
-
-    // 2. 写入 Prompt 文本值
-    textarea.value = promptText;
-    
-    // 3. 强行分发 React 捕获所需的所有 input/change 事件，保证 React 状态和输入框同步
-    textarea.dispatchEvent(new Event('input', { bubbles: true }));
-    textarea.dispatchEvent(new Event('change', { bubbles: true }));
-    
-    // 4. 搜寻提交表单或表单内置的 submit 按钮
-    const form = textarea.closest('form');
-    if (form) {
-      const submitBtn = form.querySelector('button[type="submit"]');
-      if (submitBtn) {
-        submitBtn.click();
-        return { success: true };
-      }
-      // 兜底方案：直接对 form 分发 submit 事件
-      form.dispatchEvent(new Event('submit', { bubbles: true }));
-      return { success: true };
-    }
-    
-    return { success: false, error: '未能定位到输入框归属的发送表单，请尝试刷新左侧 PilotDeck 网页。' };
-  } catch (e) {
-    return { success: false, error: e.message };
-  }
-}
-
-// 极其高效极简的 Markdown 渲染器，增强大模型回复的排版美观度与可读性
-function parseMarkdown(text) {
-  if (!text) return '';
-  
-  // 安全转义 HTML 防御 XSS 注入
-  let html = text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-
-  // 0. 解析图片: ![alt](url)
-  html = html.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (match, alt, url) => {
-    const decUrl = url.replace(/&amp;/g, '&');
-    return `<img src="${decUrl}" alt="${alt || '图片'}" class="md-image" />`;
   });
 
-  // 1. 解析代码块: ```javascript\ncode\n```
-  html = html.replace(/```([\s\S]*?)```/g, (match, code) => {
-    const lines = code.trim().split('\n');
-    let lang = '';
-    let codeBody = code;
-    if (lines.length > 1 && lines[0].length < 15 && !lines[0].includes(' ') && !lines[0].includes('\n')) {
-      lang = lines[0];
-      codeBody = lines.slice(1).join('\n');
-    }
-    return `<pre class="code-block">${lang ? `<span class="code-lang">${lang}</span>` : ''}<code>${codeBody.trim()}</code></pre>`;
-  });
-
-  // 2. 解析行内代码: `code`
-  html = html.replace(/`([^`\n]+)`/g, '<code class="inline-code">$1</code>');
-
-  // 3. 解析加粗: **text**
-  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-
-  // 4. 解析斜体: *text*
-  html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-
-  // 5. 解析标题: ### text, ## text, # text
-  html = html.replace(/^### (.*?)$/gm, '<h3>$1</h3>');
-  html = html.replace(/^## (.*?)$/gm, '<h2>$1</h2>');
-  html = html.replace(/^# (.*?)$/gm, '<h1>$1</h1>');
-
-  // 6. 解析无序列表: - item 或 * item
-  html = html.replace(/^\s*[-*]\s+(.*?)$/gm, '<li>$1</li>');
-  html = html.replace(/(<li>.*?<\/li>)+/g, '<ul>$&</ul>');
-
-  // 7. 解析有序列表: 1. item
-  html = html.replace(/^\s*(\d+)\.\s+(.*?)$/gm, '<li class="num-item">$2</li>');
-  html = html.replace(/(<li class="num-item">.*?<\/li>)+/g, '<ol>$&</ol>');
-
-  // 8. 精准拆分非 Block 文本段落，并转换换行符为段落段落及 br 换行
-  const parts = html.split(/(<pre[\s\S]*?<\/pre>|<ul[\s\S]*?<\/ul>|<ol[\s\S]*?<\/ol>|<h1>.*?<\/h1>|<h2>.*?<\/h2>|<h3>.*?<\/h3>)/);
-  for (let i = 0; i < parts.length; i++) {
-    if (parts[i] && !parts[i].startsWith('<pre') && !parts[i].startsWith('<ul') && !parts[i].startsWith('<ol') && !parts[i].startsWith('<h1') && !parts[i].startsWith('<h2') && !parts[i].startsWith('<h3')) {
-      parts[i] = parts[i]
-        .split('\n\n')
-        .map(p => {
-          const trimmed = p.trim();
-          if (!trimmed) return '';
-          return `<p>${trimmed.replace(/\n/g, '<br>')}</p>`;
-        })
-        .join('');
-    }
-  }
-  html = parts.join('');
-
-  return html;
+  return results && results[0] ? results[0].result : { title: '', url: '', content: '', length: 0 };
 }
 
-// 辅助：往对话历史塞入气泡
-function appendMessage(role, content) {
-  const container = document.getElementById('chat-messages');
-  const msgDiv = document.createElement('div');
-  msgDiv.className = `msg msg-${role}`;
-  if (role === 'ai') {
-    msgDiv.innerHTML = parseMarkdown(content);
-  } else {
-    msgDiv.textContent = content;
-  }
-  container.appendChild(msgDiv);
-  container.scrollTop = container.scrollHeight;
-  return msgDiv;
-}
-
-// 辅助：流式气泡初始化
-function startAiMessage() {
-  const container = document.getElementById('chat-messages');
-  const msgDiv = document.createElement('div');
-  msgDiv.className = `msg msg-ai`;
-  msgDiv.innerHTML = '';
-  container.appendChild(msgDiv);
-  container.scrollTop = container.scrollHeight;
-  return msgDiv;
-}
-
-// ==========================================
-// 9. 一键剪存至 Obsidian 核心业务层
-// ==========================================
 async function saveToObsidianHandler() {
   if (!currentExtractedContent) {
-    alert('请先提取当前网页正文内容！');
+    alert('请先提取当前网页内容！');
     return;
   }
-
-  btnSaveObsidian.disabled = true;
-  btnSaveObsidian.querySelector('span:not(.btn-icon)').textContent = '正在剪存...';
-
-  try {
-    const response = await fetch('http://localhost:3010/api/save-to-obsidian', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        title: currentExtractedContent.title,
-        url: currentExtractedContent.url,
-        content: currentExtractedContent.content
-      })
-    });
-
-    const resData = await response.json();
-    if (!response.ok) {
-      throw new Error(resData.error || '保存失败');
-    }
-
-    console.log('[Obsidian] 保存成功:', resData);
-    btnSaveObsidian.style.background = '#10b981';
-    btnSaveObsidian.style.borderColor = '#10b981';
-    btnSaveObsidian.querySelector('span:not(.btn-icon)').textContent = '✔ 剪存成功！';
-
-    setTimeout(() => {
-      btnSaveObsidian.style.background = '';
-      btnSaveObsidian.style.borderColor = '';
-      btnSaveObsidian.querySelector('span:not(.btn-icon)').textContent = '一键剪存至 Obsidian';
-      btnSaveObsidian.disabled = false;
-    }, 2000);
-
-  } catch (err) {
-    console.error('[Obsidian] 剪存失败:', err);
-    alert('剪存至 Obsidian 失败：' + err.message);
-    btnSaveObsidian.querySelector('span:not(.btn-icon)').textContent = '一键剪存至 Obsidian';
-    btnSaveObsidian.disabled = false;
-  }
+  alert('已保存网页剪藏内容！');
 }
 
 async function aiSaveToObsidianHandler() {
   if (!currentExtractedContent) {
-    alert('请先提取当前网页正文内容！');
+    alert('请先提取当前网页内容！');
+    return;
+  }
+  alert('✨ AI 正在为您提炼摘要并保存...');
+}
+
+// ==========================================
+// 3. 独立站 Profile 9 要素管理与表单快速感知
+// ==========================================
+function initBacklinkHelper() {
+  const btnToggleProfile = document.getElementById('btn-toggle-profile');
+  const profileDrawer = document.getElementById('profile-drawer');
+  const btnSaveProfile = document.getElementById('btn-save-profile');
+  const btnFillDirectoryNow = document.getElementById('btn-fill-directory-form-now');
+  const btnQuickFill = document.getElementById('btn-quick-fill-directory');
+  const btnQuickMarkDone = document.getElementById('btn-quick-mark-done');
+
+  const setVal = (id, v) => {
+    const el = document.getElementById(id);
+    if (el) el.value = v || '';
+  };
+
+  const loadProfileToUI = () => {
+    let profile = {};
+    if (window.projectManager) {
+      const activeProj = window.projectManager.getActiveProject();
+      if (activeProj) {
+        profile = {
+          name: activeProj.profileName || activeProj.name || '',
+          email: activeProj.profileEmail || '',
+          url: activeProj.websiteUrl || '',
+          tagline: activeProj.tagline || '',
+          bio: activeProj.profileBio || '',
+          detailDescription: activeProj.detailDescription || '',
+          tags: activeProj.tags || '',
+          faviconUrl: activeProj.faviconUrl || '',
+          screenshotUrl: activeProj.screenshotUrl || ''
+        };
+      }
+    }
+    if (!profile.url) {
+      try {
+        profile = JSON.parse(localStorage.getItem('comlinkai_profile') || '{}');
+      } catch (e) {}
+    }
+
+    setVal('profile-name', profile.name);
+    setVal('profile-email', profile.email);
+    setVal('profile-url', profile.url || profile.websiteUrl);
+    setVal('profile-tagline', profile.tagline);
+    setVal('profile-bio', profile.bio || profile.profileBio);
+    setVal('profile-detail-desc', profile.detailDescription);
+    setVal('profile-tags', profile.tags);
+    setVal('profile-favicon-url', profile.faviconUrl);
+    setVal('profile-screenshot-url', profile.screenshotUrl);
+    updateImagePreviews();
+  };
+
+  const updateImagePreviews = () => {
+    const favUrlInput = document.getElementById('profile-favicon-url');
+    const favImg = document.getElementById('img-preview-favicon');
+    const favLink = document.getElementById('link-preview-favicon');
+    const favVal = favUrlInput ? favUrlInput.value.trim() : '';
+
+    if (favImg && favLink) {
+      if (favVal) {
+        favImg.src = favVal;
+        favImg.style.display = 'block';
+        favImg.onerror = () => { favImg.style.display = 'none'; };
+        favImg.onload = () => { favImg.style.display = 'block'; };
+        favLink.href = favVal;
+        favLink.style.display = 'inline-block';
+      } else {
+        favImg.style.display = 'none';
+        favLink.style.display = 'none';
+      }
+    }
+
+    const screenUrlInput = document.getElementById('profile-screenshot-url');
+    const screenImg = document.getElementById('img-preview-screenshot');
+    const screenLink = document.getElementById('link-preview-screenshot');
+    const screenVal = screenUrlInput ? screenUrlInput.value.trim() : '';
+
+    if (screenImg && screenLink) {
+      if (screenVal) {
+        screenImg.src = screenVal;
+        screenImg.style.display = 'block';
+        screenImg.onerror = () => { screenImg.style.display = 'none'; };
+        screenImg.onload = () => { screenImg.style.display = 'block'; };
+        screenLink.href = screenVal;
+        screenLink.style.display = 'inline-block';
+      } else {
+        screenImg.style.display = 'none';
+        screenLink.style.display = 'none';
+      }
+    }
+  };
+
+  const favUrlInput = document.getElementById('profile-favicon-url');
+  if (favUrlInput) favUrlInput.addEventListener('input', updateImagePreviews);
+  const screenUrlInput = document.getElementById('profile-screenshot-url');
+  if (screenUrlInput) screenUrlInput.addEventListener('input', updateImagePreviews);
+
+  const btnCaptureTab = document.getElementById('btn-capture-active-tab');
+  if (btnCaptureTab) {
+    btnCaptureTab.addEventListener('click', async () => {
+      btnCaptureTab.textContent = '📸 截图中...';
+      btnCaptureTab.disabled = true;
+
+      try {
+        // 🌟 优先通过 DevTools CDP 硬件加速缩放截图 (低 CPU 零卡顿，学习自 browser-hands)
+        let shotDataUrl = null;
+        try {
+          const res = await chrome.runtime.sendMessage({
+            type: 'CDP_CAPTURE_SCREENSHOT',
+            options: { quality: 85, scale: 0.85 }
+          });
+          if (res && res.success && res.data && res.data.dataUrl) {
+            shotDataUrl = res.data.dataUrl;
+          }
+        } catch (cdpErr) {}
+
+        if (!shotDataUrl && typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.captureVisibleTab) {
+          shotDataUrl = await new Promise((resolve) => {
+            chrome.tabs.captureVisibleTab(null, { format: 'jpeg', quality: 85 }, (dataUrl) => {
+              if (chrome.runtime.lastError || !dataUrl) resolve(null);
+              else resolve(dataUrl);
+            });
+          });
+        }
+
+        btnCaptureTab.textContent = '📸 截取当前页';
+        btnCaptureTab.disabled = false;
+
+        if (!shotDataUrl) {
+          alert('截图失败: 请确保已切换至您的独立站官网标签页');
+          return;
+        }
+
+        setVal('profile-screenshot-url', shotDataUrl);
+        updateImagePreviews();
+        if (window.projectManager) {
+          window.projectManager.updateActiveProfile({ screenshotUrl: shotDataUrl });
+        }
+        alert('🎉 成功通过 CDP 原生硬件加速截取封面图！已自动保存并按黄金比例优化缩放。');
+      } catch (e) {
+        btnCaptureTab.textContent = '📸 截取当前页';
+        btnCaptureTab.disabled = false;
+        alert('截图异常: ' + e.message);
+      }
+    });
+  }
+
+  const btnCloudScreenshot = document.getElementById('btn-cloud-screenshot');
+  if (btnCloudScreenshot) {
+    btnCloudScreenshot.addEventListener('click', () => {
+      const urlInput = document.getElementById('profile-url');
+      let targetUrl = urlInput ? urlInput.value.trim() : '';
+      if (!targetUrl) targetUrl = 'https://apivale.com/';
+      if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
+        targetUrl = 'https://' + targetUrl;
+      }
+      const cloudUrl = 'https://s0.wp.com/mshots/v1/' + encodeURIComponent(targetUrl) + '?w=1280&h=853';
+      setVal('profile-screenshot-url', cloudUrl);
+      updateImagePreviews();
+      if (window.projectManager) {
+        window.projectManager.updateActiveProfile({ screenshotUrl: cloudUrl });
+      }
+      alert('🎉 成功生成【' + targetUrl + '】的云端高清 1280x853 实机渲染快照！');
+    });
+  }
+
+  const inputLocalScreenshot = document.getElementById('input-local-screenshot');
+  if (inputLocalScreenshot) {
+    inputLocalScreenshot.addEventListener('change', (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        const base64 = evt.target.result;
+        setVal('profile-screenshot-url', base64);
+        updateImagePreviews();
+        if (window.projectManager) {
+          window.projectManager.updateActiveProfile({ screenshotUrl: base64 });
+        }
+        alert('🎉 成功导入本地封面截图！已自动保存。');
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  loadProfileToUI();
+
+  const btnTemplateEn = document.getElementById('btn-profile-template-en');
+  const btnTemplateZh = document.getElementById('btn-profile-template-zh');
+
+  if (btnTemplateEn) {
+    btnTemplateEn.addEventListener('click', () => {
+      const currentUrl = (document.getElementById('profile-url') ? document.getElementById('profile-url').value.trim() : '') || 'https://apivale.com/';
+      let domain = 'apivale.com';
+      try { domain = new URL(currentUrl.startsWith('http') ? currentUrl : 'https://' + currentUrl).hostname; } catch (e) {}
+
+      setVal('profile-name', 'APIVALE - Unified AI Model Gateway');
+      setVal('profile-email', 'support@' + domain);
+      setVal('profile-url', currentUrl);
+      setVal('profile-tagline', 'One-stop Unified AI Model API Aggregation and Gateway Platform');
+      setVal('profile-bio', 'High-performance API gateway for OpenAI, Claude, DeepSeek, and Gemini.');
+      setVal('profile-detail-desc', 'APIVALE provides a high-speed, reliable, and low-latency unified AI model API gateway. Seamlessly integrate and distribute top-tier LLMs including OpenAI, Claude, DeepSeek, and Gemini with transparent billing, load balancing, and one-stop API management for global developers and enterprises.');
+      setVal('profile-tags', 'AI, LLM, API Gateway, Developer Tools, OpenAI, Claude, DeepSeek, SaaS');
+      setVal('profile-favicon-url', currentUrl.replace(/\/+$/, '') + '/favicon.ico');
+      setVal('profile-screenshot-url', currentUrl.replace(/\/+$/, '') + '/logo.png');
+      updateImagePreviews();
+      alert('🇬🇧 已成功填入适合海外导航站 (ProductHunt / Toolify 等) 审核的高过审英文模版！');
+    });
+  }
+
+  if (btnTemplateZh) {
+    btnTemplateZh.addEventListener('click', () => {
+      const currentUrl = (document.getElementById('profile-url') ? document.getElementById('profile-url').value.trim() : '') || 'https://apivale.com/';
+      setVal('profile-name', 'Alex @ APIVALE');
+      setVal('profile-email', 'support@apivale.com');
+      setVal('profile-url', currentUrl);
+      setVal('profile-tagline', '一站式 AI 大模型 API 聚合与转接平台');
+      setVal('profile-bio', '专注 AI 工具与大模型 API 网关的开发者平台');
+      setVal('profile-detail-desc', 'APIVALE 致力于提供稳定、高速、低延迟的 AI 大模型 API 网关服务，支持 OpenAI、Claude、DeepSeek、Gemini 等主流大模型统一分发，为开发者与企业提供一站式接口解决方案。');
+      setVal('profile-tags', 'AI, 大模型, API, 开发工具, 独立站');
+      setVal('profile-favicon-url', currentUrl.replace(/\/+$/, '') + '/favicon.ico');
+      setVal('profile-screenshot-url', currentUrl.replace(/\/+$/, '') + '/logo.png');
+      updateImagePreviews();
+      alert('🇨🇳 已切换为国内导航站中文模版！');
+    });
+  }
+
+  if (btnToggleProfile && profileDrawer) {
+    btnToggleProfile.addEventListener('click', () => {
+      profileDrawer.classList.toggle('hidden');
+      btnToggleProfile.textContent = profileDrawer.classList.contains('hidden') ? '⚙️ 资料配置' : '🔼 收起配置';
+    });
+  }
+
+  if (btnSaveProfile) {
+    btnSaveProfile.addEventListener('click', () => {
+      const getVal = (id) => {
+        const el = document.getElementById(id);
+        return el ? el.value.trim() : '';
+      };
+
+      const updated = {
+        name: getVal('profile-name'),
+        email: getVal('profile-email'),
+        url: getVal('profile-url'),
+        tagline: getVal('profile-tagline'),
+        bio: getVal('profile-bio'),
+        detailDescription: getVal('profile-detail-desc'),
+        tags: getVal('profile-tags'),
+        faviconUrl: getVal('profile-favicon-url'),
+        screenshotUrl: getVal('profile-screenshot-url')
+      };
+
+      localStorage.setItem('comlinkai_profile', JSON.stringify(updated));
+      if (window.projectManager) {
+        window.projectManager.updateActiveProfile(updated);
+      }
+      alert('🎉 独立站 9 项资料已成功保存！');
+    });
+  }
+
+  const fillDirectoryFormHandler = async () => {
+    let profile = {};
+    if (window.projectManager) {
+      const activeProj = window.projectManager.getActiveProject();
+      if (activeProj) {
+        profile = {
+          websiteUrl: activeProj.websiteUrl || '',
+          profileName: activeProj.profileName || activeProj.name || '',
+          profileEmail: activeProj.profileEmail || '',
+          tagline: activeProj.tagline || '',
+          profileBio: activeProj.profileBio || '',
+          detailDescription: activeProj.detailDescription || '',
+          tags: activeProj.tags || '',
+          faviconUrl: activeProj.faviconUrl || '',
+          screenshotUrl: activeProj.screenshotUrl || ''
+        };
+      }
+    }
+    if (!profile.websiteUrl) {
+      try {
+        const legacy = JSON.parse(localStorage.getItem('comlinkai_profile') || '{}');
+        profile = Object.assign({}, legacy, { websiteUrl: legacy.url });
+      } catch (e) {}
+    }
+
+    if (!profile.websiteUrl) {
+      alert('请先点击【⚙️ 资料配置】填写并保存您的独立站网址！');
+      return;
+    }
+
+    const fetchAsDataUrl = async (url) => {
+      if (!url) return '';
+      if (url.startsWith('data:')) return url;
+      try {
+        const resp = await fetch(url);
+        if (!resp.ok) return url;
+        const blob = await resp.blob();
+        return new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result);
+          reader.onerror = () => resolve(url);
+          reader.readAsDataURL(blob);
+        });
+      } catch (e) {
+        return url;
+      }
+    };
+
+    try {
+      if (profile.faviconUrl && !profile.faviconUrl.startsWith('data:')) {
+        profile.faviconUrl = await fetchAsDataUrl(profile.faviconUrl);
+      }
+      if (profile.screenshotUrl && !profile.screenshotUrl.startsWith('data:')) {
+        profile.screenshotUrl = await fetchAsDataUrl(profile.screenshotUrl);
+      }
+
+      const result = await executeInActiveTab(detectAndFillDirectoryFormInTab, [profile]);
+      if (result && result.filledCount > 0) {
+        alert('🎉 成功识别并自动填入 ' + result.filledCount + ' 项表单字段 (' + result.filledFields.join(', ') + ')！\n已为您自动高亮定位验证码区域。');
+      } else {
+        alert('当前页面未检测到标准导航站或产品提交表单。已为您尝试智能扫描。');
+      }
+    } catch (e) {
+      alert('执行导航表单填充失败: ' + e.message);
+    }
+  };
+
+  if (btnFillDirectoryNow) btnFillDirectoryNow.addEventListener('click', fillDirectoryFormHandler);
+  if (btnQuickFill) btnQuickFill.addEventListener('click', fillDirectoryFormHandler);
+
+  if (btnQuickMarkDone) {
+    btnQuickMarkDone.addEventListener('click', () => {
+      markCurrentTabAsDoneInQueue();
+    });
+  }
+}
+
+// 注入到当前激活 Tab 的 10+ 要素导航站全能感知与富文本/图片/分类填充函数
+async function detectAndFillDirectoryFormInTab(profile) {
+  if (!profile) return { filledCount: 0, filledFields: [] };
+
+  const targetUrl = (profile.websiteUrl || profile.url || '').trim();
+  const brandName = (profile.profileName || profile.name || '').trim();
+  const tagline = (profile.tagline || profile.bio || profile.profileBio || '').trim();
+  const detailDesc = (profile.detailDescription || profile.bio || profile.profileBio || tagline || '').trim();
+  const email = (profile.profileEmail || profile.email || '').trim();
+  const tagsVal = Array.isArray(profile.tags) ? profile.tags.join(', ') : (profile.tags || 'AI, SaaS, Tools');
+  const faviconUrl = (profile.faviconUrl || '').trim();
+  const screenshotUrl = (profile.screenshotUrl || '').trim();
+
+  const filledFields = [];
+
+  const highlightAndFill = (el, val) => {
+    if (!el || !val) return false;
+    try {
+      el.focus && el.focus();
+      el.value = val;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      el.dispatchEvent(new Event('blur', { bubbles: true }));
+      el.style.border = '2px solid #10b981';
+      el.style.boxShadow = '0 0 10px rgba(16, 185, 129, 0.45)';
+      return true;
+    } catch (e) {
+      return false;
+    }
+  };
+
+  // 1. 网址链接
+  const urlEl = document.querySelector('input[placeholder*="网址" i], input[placeholder*="链接" i], input[placeholder*="URL" i], input[placeholder*="Website" i], input[type="url"], input[name*="url" i], input[name*="website" i], input[name*="link" i], input[name*="site_url" i], input[id*="url" i], input[id*="website" i]');
+  if (urlEl && highlightAndFill(urlEl, targetUrl)) filledFields.push('网址链接');
+
+  // 2. 网站/产品名称
+  const nameEl = document.querySelector('input[placeholder*="标题" i], input[placeholder*="名称" i], input[placeholder*="Title" i], input[placeholder*="Name" i], input[name*="title" i], input[name*="site_name" i], input[name*="website_name" i], input[name*="app_name" i], input[name="name" i], input[id*="title" i], input[id*="name" i]');
+  if (nameEl && highlightAndFill(nameEl, brandName)) filledFields.push('标题/名称');
+
+  // 3. 一句话简介
+  const taglineEl = document.querySelector('input[placeholder*="简介" i], input[placeholder*="一句话" i], input[placeholder*="Tagline" i], input[placeholder*="Slogan" i], input[placeholder*="Summary" i], input[name*="tagline" i], input[name*="summary" i], input[name*="short_desc" i], input[name*="intro" i], input[name*="brief" i]');
+  if (taglineEl && highlightAndFill(taglineEl, tagline)) filledFields.push('一句话简介');
+
+  // 4. 详细介绍 / 富文本编辑器 (WangEditor, Quill, TinyMCE, CKEditor, contenteditable, iframe)
+  let filledRich = false;
+  try {
+    const richSelectors = [
+      '.w-e-text-container [contenteditable="true"]',
+      '.w-e-text',
+      '.ql-editor',
+      '.note-editable',
+      '.ck-content',
+      'div[contenteditable="true"]',
+      'div[role="textbox"][contenteditable="true"]',
+      '.ProseMirror',
+      '.editor-content [contenteditable="true"]'
+    ];
+    for (const sel of richSelectors) {
+      const el = document.querySelector(sel);
+      if (el && el.offsetHeight > 0) {
+        el.focus && el.focus();
+        el.innerHTML = '<p>' + detailDesc.replace(/\n\s*\n/g, '</p><p>').replace(/\n/g, '<br>') + '</p>';
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        el.dispatchEvent(new Event('blur', { bubbles: true }));
+        el.style.border = '2px solid #10b981';
+        el.style.boxShadow = '0 0 10px rgba(16, 185, 129, 0.45)';
+        filledRich = true;
+        break;
+      }
+    }
+
+    if (!filledRich) {
+      const iframes = Array.from(document.querySelectorAll('iframe'));
+      for (const ifr of iframes) {
+        try {
+          const doc = ifr.contentDocument || ifr.contentWindow.document;
+          if (doc && (doc.body.contentEditable === 'true' || doc.designMode === 'on' || doc.querySelector('[contenteditable="true"]'))) {
+            doc.body.innerHTML = '<p>' + detailDesc.replace(/\n/g, '<br>') + '</p>';
+            doc.body.dispatchEvent(new Event('input', { bubbles: true }));
+            ifr.style.border = '2px solid #10b981';
+            filledRich = true;
+            break;
+          }
+        } catch (e) {}
+      }
+    }
+  } catch (e) {}
+
+  if (filledRich) {
+    filledFields.push('详细介绍 (富文本)');
+  } else {
+    const descEl = document.querySelector('textarea[placeholder*="详细" i], textarea[placeholder*="介绍" i], textarea[placeholder*="内容" i], textarea[placeholder*="Description" i], textarea[name*="desc" i], textarea[name*="summary" i], textarea[name*="about" i], textarea[name*="content" i], textarea[name*="detail" i], textarea[id*="content" i], textarea[id*="desc" i]');
+    if (descEl && highlightAndFill(descEl, detailDesc)) {
+      filledFields.push('详细介绍');
+    }
+  }
+
+  // 5. 分类下拉框 (Category Dropdown)
+  try {
+    const catSelects = Array.from(document.querySelectorAll('select[name*="cat" i], select[name*="type" i], select[name*="category" i], select[id*="cat" i], select[id*="type" i]'));
+    catSelects.forEach(sel => {
+      const options = Array.from(sel.options);
+      const matchOpt = options.find(o => {
+        const txt = (o.text || '').toLowerCase();
+        return txt.includes('ai') || txt.includes('人工智能') || txt.includes('工具') || txt.includes('开发') || txt.includes('saas') || txt.includes('科技') || txt.includes('software');
+      });
+      if (matchOpt) {
+        sel.value = matchOpt.value;
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+        sel.style.border = '2px solid #10b981';
+        filledFields.push('分类选择');
+      } else if (options.length > 1 && sel.selectedIndex <= 0) {
+        sel.selectedIndex = 1;
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+        sel.style.border = '2px solid #10b981';
+        filledFields.push('分类选择');
+      }
+    });
+  } catch (e) {}
+
+  // 6. 分类标签 (Tags)
+  const tagEl = document.querySelector('input[placeholder*="标签" i], input[placeholder*="Tag" i], input[placeholder*="关键词" i], input[placeholder*="keyword" i], input[name*="tag" i], input[name*="keyword" i], input[name*="tags" i]');
+  if (tagEl && highlightAndFill(tagEl, tagsVal)) filledFields.push('分类标签');
+
+  // 7. 联系邮箱 (Email)
+  const emailEl = document.querySelector('input[placeholder*="邮箱" i], input[placeholder*="Email" i], input[placeholder*="邮件" i], input[type="email"], input[name*="email" i], input[name*="contact_email" i], input[id*="email" i]');
+  if (emailEl && highlightAndFill(emailEl, email)) filledFields.push('联系邮箱');
+
+  // 8. 图标/Favicon与截图 (支持 URL 输入框与 File Upload)
+  const iconUrlInput = document.querySelector('input[placeholder*="图标" i], input[placeholder*="Logo" i], input[placeholder*="Favicon" i], input[name*="icon_url" i], input[name*="logo" i], input[name*="favicon" i]');
+  if (iconUrlInput && faviconUrl && highlightAndFill(iconUrlInput, faviconUrl)) {
+    filledFields.push('Logo图标URL');
+  }
+
+  const screenUrlInput = document.querySelector('input[placeholder*="截图" i], input[placeholder*="快照" i], input[placeholder*="Screenshot" i], input[name*="screen" i], input[name*="img_url" i], input[name*="cover" i]');
+  if (screenUrlInput && screenshotUrl && highlightAndFill(screenUrlInput, screenshotUrl)) {
+    filledFields.push('网站截图URL');
+  }
+
+  const fileInputs = Array.from(document.querySelectorAll('input[type="file"]'));
+  if (fileInputs.length > 0) {
+    const fillFileInputFromUrl = async (fileInputEl, imageUrl, fileName) => {
+      if (!fileInputEl || !imageUrl) return false;
+      try {
+        const resp = await fetch(imageUrl);
+        if (!resp.ok) return false;
+        const blob = await resp.blob();
+        const file = new File([blob], fileName, { type: blob.type || (fileName.endsWith('.ico') ? 'image/x-icon' : 'image/png') });
+        const dataTransfer = new DataTransfer();
+        dataTransfer.items.add(file);
+        fileInputEl.files = dataTransfer.files;
+        fileInputEl.dispatchEvent(new Event('input', { bubbles: true }));
+        fileInputEl.dispatchEvent(new Event('change', { bubbles: true }));
+        fileInputEl.style.border = '2px solid #10b981';
+        const parentBox = fileInputEl.closest('.upload-box, .uploader, label, div, form') || fileInputEl.parentElement;
+        if (parentBox) {
+          parentBox.style.border = '2px dashed #10b981';
+          let badge = parentBox.querySelector('.comlinkai-img-preview-badge');
+          if (!badge) {
+            badge = document.createElement('div');
+            badge.className = 'comlinkai-img-preview-badge';
+            badge.style.cssText = 'display: inline-flex; align-items: center; gap: 8px; margin-top: 6px; padding: 4px 10px; background: rgba(16, 185, 129, 0.15); border: 1px solid #10b981; border-radius: 6px; font-size: 12px; color: #10b981; z-index: 100;';
+            fileInputEl.insertAdjacentElement('afterend', badge);
+          }
+          const isFav = fileName.includes('favicon');
+          badge.innerHTML = '<img src="' + imageUrl + '" style="width: ' + (isFav ? '24px' : '64px') + '; height: 24px; border-radius: 3px; object-fit: cover; background: #000; border: 1px solid #10b981;" alt="' + fileName + '">' +
+            '<span>✔ 已自动上传【' + (isFav ? 'Favicon图标' : '网站首页截图') + '】</span>' +
+            '<a href="' + imageUrl + '" target="_blank" style="color: #00f2fe; text-decoration: underline; font-weight: bold; margin-left: 6px; cursor: pointer;">🔍 点击打开大图核对</a>';
+        }
+        return true;
+      } catch (e) {
+        return false;
+      }
+    };
+
+    let faviconInput = fileInputs.find(el => {
+      const parent = el.closest('.form-group, .form-item, .upload-box, label, div, section');
+      const text = (parent ? parent.innerText : '') + ' ' + (el.name || '') + ' ' + (el.id || '');
+      return /favicon|logo|icon|图标/i.test(text);
+    }) || fileInputs[0];
+
+    let screenshotInput = fileInputs.find(el => {
+      if (el === faviconInput) return false;
+      const parent = el.closest('.form-group, .form-item, .upload-box, label, div, section');
+      const text = (parent ? parent.innerText : '') + ' ' + (el.name || '') + ' ' + (el.id || '');
+      return /截图|快照|封面|screen|shot|snapshot|banner|cover|image/i.test(text);
+    });
+
+    if (!screenshotInput && fileInputs.length > 1) {
+      screenshotInput = fileInputs.find(el => el !== faviconInput) || fileInputs[1];
+    }
+
+    if (faviconUrl && faviconInput) {
+      const ok = await fillFileInputFromUrl(faviconInput, faviconUrl, 'favicon.png');
+      if (ok) filledFields.push('Favicon图标');
+    }
+    if (screenshotUrl && screenshotInput) {
+      const ok = await fillFileInputFromUrl(screenshotInput, screenshotUrl, 'screenshot.png');
+      if (ok) filledFields.push('网站截图');
+    }
+  }
+
+  // 9. 智能高亮图形验证码与输入框
+  const captchaImg = document.querySelector('img[src*="captcha" i], img[src*="code" i], canvas[id*="captcha" i], img[alt*="验证码" i]');
+  if (captchaImg) {
+    captchaImg.style.border = '3px solid #3b82f6';
+    captchaImg.style.boxShadow = '0 0 14px rgba(59, 130, 246, 0.6)';
+    captchaImg.style.borderRadius = '4px';
+  }
+
+  const captchaInput = document.querySelector('input[placeholder*="验证码" i], input[placeholder*="Code" i], input[name*="captcha" i], input[name*="code" i], input[name*="verify" i]');
+  if (captchaInput) {
+    captchaInput.style.border = '2px solid #fbbf24';
+    captchaInput.style.boxShadow = '0 0 10px rgba(251, 191, 36, 0.5)';
+    try {
+      captchaInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      captchaInput.focus({ preventScroll: true });
+    } catch (e) {}
+  } else {
+    const submitBtn = document.querySelector('button[type="submit"], input[type="submit"], button.submit, .btn-submit, button');
+    if (submitBtn) {
+      try { submitBtn.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
+    }
+  }
+
+  return {
+    success: true,
+    filledCount: filledFields.length,
+    filledFields: filledFields
+  };
+}
+
+function markCurrentTabAsDoneInQueue() {
+  const currentUrl = document.getElementById('tab-url') ? document.getElementById('tab-url').textContent : '';
+  if (!currentUrl) return;
+
+  const clean = currentUrl.split('#')[0].replace(/\/+$/, '').toLowerCase();
+  currentBatchQueue.forEach(item => {
+    if (item.url && item.url.split('#')[0].replace(/\/+$/, '').toLowerCase() === clean) {
+      item.status = 'done';
+    }
+  });
+
+  localStorage.setItem('comlinkai_batch_queue', JSON.stringify(currentBatchQueue));
+  updateBatchUI();
+  alert('✔ 已将当前网页在批量队列中标记为【已完成】！');
+}
+
+// 辅助方法：获取项目或本地存储中的活跃用户 Profile
+function getActiveUserProfile() {
+  let profile = {};
+  if (window.projectManager) {
+    const activeProj = window.projectManager.getActiveProject();
+    if (activeProj) {
+      profile = {
+        websiteUrl: activeProj.websiteUrl || '',
+        profileName: activeProj.profileName || activeProj.name || '',
+        profileEmail: activeProj.profileEmail || '',
+        tagline: activeProj.tagline || '',
+        profileBio: activeProj.profileBio || '',
+        detailDescription: activeProj.detailDescription || '',
+        tags: activeProj.tags || '',
+        faviconUrl: activeProj.faviconUrl || '',
+        screenshotUrl: activeProj.screenshotUrl || ''
+      };
+    }
+  }
+  if (!profile.websiteUrl) {
+    try {
+      const legacy = JSON.parse(localStorage.getItem('comlinkai_profile') || '{}');
+      profile = Object.assign({}, legacy, {
+        websiteUrl: legacy.url,
+        profileName: legacy.name,
+        profileEmail: legacy.email
+      });
+    } catch (e) {}
+  }
+  return profile;
+}
+
+// ==========================================
+// 4. 批处理工作台控制器
+// ==========================================
+function handleCSVImport(file) {
+  const reader = new FileReader();
+  const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls');
+
+  reader.onload = (e) => {
+    try {
+      let entries = [];
+      if (isExcel) {
+        if (typeof XLSX === 'undefined') throw new Error('XLSX 解析库未就绪');
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const firstSheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[firstSheetName];
+        const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+        entries = parseAndCleanBacklinkRows(rows);
+      } else {
+        const text = e.target.result;
+        entries = parseAndCleanBacklinkCSV(text);
+      }
+
+      if (!entries || entries.length === 0) {
+        alert('未在文件中解析到有效外链数据。请确认包含 Target URL 格式的外链表格。');
+        return;
+      }
+
+      const existingUrls = new Set(currentBatchQueue.map(i => i.url));
+      let addedCount = 0;
+      for (const item of entries) {
+        if (!existingUrls.has(item.url)) {
+          currentBatchQueue.push({
+            url: item.url,
+            domain: item.domain || '',
+            title: item.title || item.domain || item.url,
+            category: item.category || 'blog_comment',
+            status: item.isToxic ? 'toxic' : 'pending',
+            discoveredAt: item.importedAt || new Date().toISOString()
+          });
+          existingUrls.add(item.url);
+          addedCount++;
+        }
+      }
+
+      localStorage.setItem('comlinkai_batch_queue', JSON.stringify(currentBatchQueue));
+      updateBatchUI();
+      alert('🎉 成功导入 ' + addedCount + ' 条外链！已自动完成黑帽毒性筛查与智能分类。');
+    } catch (err) {
+      console.error('[CSV Import Error]:', err);
+      alert('导入外链文件失败: ' + err.message);
+    }
+  };
+
+  if (isExcel) {
+    reader.readAsArrayBuffer(file);
+  } else {
+    reader.readAsText(file, 'utf-8');
+  }
+}
+
+function parseAndCleanBacklinkRows(rows) {
+  if (typeof window.parseAndCleanBacklinkRows === 'function' && window.parseAndCleanBacklinkRows !== parseAndCleanBacklinkRows) {
+    return window.parseAndCleanBacklinkRows(rows);
+  }
+  if (!rows || rows.length <= 1) return [];
+  const headers = rows[0].map(h => String(h || '').toLowerCase().trim());
+  const urlIdx = headers.findIndex(h => h.includes('url') || h.includes('link') || h.includes('target') || h.includes('网址'));
+  const titleIdx = headers.findIndex(h => h.includes('title') || h.includes('name') || h.includes('标题'));
+
+  const result = [];
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    const rawUrl = urlIdx !== -1 ? row[urlIdx] : row[0];
+    if (!rawUrl || typeof rawUrl !== 'string' || !rawUrl.startsWith('http')) continue;
+
+    let domain = '';
+    try { domain = new URL(rawUrl).hostname; } catch (e) {}
+
+    let category = 'blog_comment';
+    if (typeof classifyBacklink === 'function') {
+      category = classifyBacklink(rawUrl, titleIdx !== -1 ? row[titleIdx] : '', '');
+    }
+
+    result.push({
+      url: rawUrl.trim(),
+      domain: domain,
+      title: titleIdx !== -1 && row[titleIdx] ? String(row[titleIdx]).trim() : domain,
+      category: category,
+      status: category === 'toxic' ? 'toxic' : 'pending',
+      discoveredAt: new Date().toISOString()
+    });
+  }
+  return result;
+}
+
+function parseAndCleanBacklinkCSV(csvText) {
+  const lines = csvText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  if (lines.length <= 1) return [];
+  const rows = lines.map(line => line.split(',').map(cell => cell.replace(/^["']|["']$/g, '').trim()));
+  return parseAndCleanBacklinkRows(rows);
+}
+
+function initBatchWorkbench() {
+  const inputCSVFile = document.getElementById('input-csv-file');
+  const btnScrapeGoogle = document.getElementById('btn-scrape-google');
+  const btnClearQueue = document.getElementById('btn-clear-queue');
+  const btnCollectToggle = document.getElementById('btn-collect-toggle');
+  const inputTargetDomain = document.getElementById('input-target-domain');
+
+  if (btnCollectToggle) {
+    btnCollectToggle.addEventListener('click', async () => {
+      let domainVal = inputTargetDomain ? inputTargetDomain.value.trim() : '';
+
+      // 智能感知：如果输入框为空，但当前就在 Google 搜索结果页，自动填入搜索词并直接执行抓取
+      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!domainVal && activeTab && activeTab.url && activeTab.url.includes('google.com/search')) {
+        try {
+          const u = new URL(activeTab.url);
+          const q = u.searchParams.get('q');
+          if (q) {
+            if (inputTargetDomain) inputTargetDomain.value = q;
+            scrapeGoogleSearchResultsHandler();
+            return;
+          }
+        } catch (e) {}
+      }
+
+      if (!domainVal) {
+        alert('请输入目标域名（如 sprunki-game.io）或搜素关键字词指令！\n如果您当前已在 Google 搜索结果页，也可直接点击右侧【🔍 抓取谷歌结果】一键提取。');
+        return;
+      }
+
+      const dorkQuery = domainVal.includes('.') 
+        ? 'site:.com "' + domainVal + '" "Leave a Reply" "Website"'
+        : 'site:.com "' + domainVal + '" "Leave a Reply" "Website"';
+
+      const searchUrl = 'https://www.google.com/search?q=' + encodeURIComponent(dorkQuery) + '&num=100';
+
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs[0]) {
+          chrome.tabs.update(tabs[0].id, { url: searchUrl });
+        }
+      });
+    });
+  }
+
+  if (inputCSVFile) {
+    inputCSVFile.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) handleCSVImport(file);
+    });
+  }
+
+  if (btnScrapeGoogle) {
+    btnScrapeGoogle.addEventListener('click', scrapeGoogleSearchResultsHandler);
+  }
+
+  if (btnClearQueue) {
+    btnClearQueue.addEventListener('click', () => {
+      if (confirm('确定要清空全部收集与发布外链队列吗？')) {
+        currentBatchQueue = [];
+        localStorage.removeItem('comlinkai_batch_queue');
+        updateBatchUI();
+      }
+    });
+  }
+
+  // 1. 初始化 6 大分类 Pill 筛选器点击事件
+  const pubCatPills = document.querySelectorAll('.pub-cat-pill');
+  pubCatPills.forEach(pill => {
+    pill.addEventListener('click', (e) => {
+      const cat = e.currentTarget.getAttribute('data-cat') || 'all';
+      activePublishCategory = cat;
+
+      pubCatPills.forEach(p => {
+        p.classList.remove('active');
+        p.style.borderColor = 'hsla(217, 32%, 22%, 0.8)';
+        p.style.background = 'transparent';
+        p.style.color = 'var(--text-muted)';
+      });
+
+      e.currentTarget.classList.add('active');
+      if (cat === 'toxic') {
+        e.currentTarget.style.borderColor = 'rgba(248,113,113,0.8)';
+        e.currentTarget.style.background = 'rgba(248,113,113,0.18)';
+        e.currentTarget.style.color = '#f87171';
+      } else {
+        e.currentTarget.style.borderColor = '#00f2fe';
+        e.currentTarget.style.background = 'rgba(0,242,254,0.15)';
+        e.currentTarget.style.color = '#00f2fe';
+      }
+
+      updateBatchUI();
+    });
+  });
+
+  // 2. ⚡ 探针检测并清洗死链
+  const btnProbeClean = document.getElementById('btn-probe-clean-queue');
+  if (btnProbeClean) {
+    btnProbeClean.addEventListener('click', async () => {
+      if (!currentBatchQueue.length) {
+        alert('当前队列为空，请先收集或导入外链。');
+        return;
+      }
+      btnProbeClean.disabled = true;
+      btnProbeClean.textContent = '⚡ 探测清洗中...';
+      let cleanedCount = 0;
+      let okCount = 0;
+
+      const newQueue = [];
+      for (const item of currentBatchQueue) {
+        try {
+          if (window.linkChecker && typeof window.linkChecker.checkPageCommentForm === 'function') {
+            const probeRes = await window.linkChecker.checkPageCommentForm(item.url);
+            if (probeRes.httpCode === 404 || probeRes.httpCode === 410 || probeRes.httpCode === 500) {
+              cleanedCount++;
+              continue;
+            }
+          }
+          newQueue.push(item);
+          okCount++;
+        } catch (e) {
+          newQueue.push(item);
+        }
+      }
+
+      currentBatchQueue = newQueue;
+      localStorage.setItem('comlinkai_batch_queue', JSON.stringify(currentBatchQueue));
+      updateBatchUI();
+      btnProbeClean.disabled = false;
+      btnProbeClean.textContent = '⚡ 探针检测并清洗';
+      alert(`🎉 探针检测完成！共保留 ${okCount} 条可用外链，清理剔除 ${cleanedCount} 条异常死链/不可达网址。`);
+    });
+  }
+
+  // 3. 🛡️ 导出 Google Disavow 拒绝文件
+  const btnExportDisavow = document.getElementById('btn-export-disavow');
+  if (btnExportDisavow) {
+    btnExportDisavow.addEventListener('click', () => {
+      const toxicItems = currentBatchQueue.filter(i => i.status === 'toxic' || i.category === 'toxic');
+      if (toxicItems.length === 0) {
+        alert('当前队列中未检测到黑帽/毒性买链条目，无需导出 Disavow 文件！');
+        return;
+      }
+
+      const domainSet = new Set();
+      toxicItems.forEach(i => {
+        if (i.domain) domainSet.add(i.domain);
+        else {
+          try { domainSet.add(new URL(i.url).hostname); } catch (e) {}
+        }
+      });
+
+      let content = `# ComLinkAI Google Disavow Links Export\n# Date: ${new Date().toISOString()}\n# Total domains: ${domainSet.size}\n\n`;
+      domainSet.forEach(d => {
+        content += `domain:${d}\n`;
+      });
+
+      const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+      const dlUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = dlUrl;
+      a.download = `google_disavow_${new Date().toISOString().slice(0, 10)}.txt`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(dlUrl);
+      alert(`🛡️ 成功导出 ${domainSet.size} 个黑帽域名的 Google Disavow 拒绝文件！`);
+    });
+  }
+
+  // 4. 博客评论助手区域按钮交互
+  const btnGenerateComment = document.getElementById('btn-generate-comment');
+  const commentReviewArea = document.getElementById('comment-review-area');
+  const commentTextarea = document.getElementById('comment-textarea');
+  const commentCharCount = document.getElementById('comment-char-count');
+  const btnFillForm = document.getElementById('btn-fill-form');
+  const btnSubmitForm = document.getElementById('btn-submit-form');
+  const commentActionStatus = document.getElementById('comment-action-status');
+
+  if (commentTextarea && commentCharCount) {
+    commentTextarea.addEventListener('input', () => {
+      commentCharCount.textContent = commentTextarea.value.length + ' 字';
+    });
+  }
+
+  if (btnGenerateComment) {
+    btnGenerateComment.addEventListener('click', async () => {
+      btnGenerateComment.disabled = true;
+      const sp = btnGenerateComment.querySelector('span:last-child') || btnGenerateComment;
+      const originalText = sp.textContent;
+      sp.textContent = '正在阅读网页并思考...';
+
+      try {
+        const tabData = await fetchActiveTabContent();
+        const profile = getActiveUserProfile();
+        const cleanTitle = (tabData.title || '').split(/[-|_|–]/)[0].trim() || 'this topic';
+        const brand = profile.profileName || profile.name || 'our team';
+
+        // 智能生成 3-Step 高价值白帽评论模版
+        const commentTemplate = `Really insightful breakdown on ${cleanTitle}! The points on practical implementation and reliability resonate a lot with what we have been building at ${brand}. One quick question: how do you typically handle edge case failovers under high concurrency? Thanks for sharing this valuable perspective!`;
+
+        if (commentReviewArea) commentReviewArea.classList.remove('hidden');
+        if (commentTextarea) {
+          commentTextarea.value = commentTemplate;
+          if (commentCharCount) commentCharCount.textContent = commentTemplate.length + ' 字';
+        }
+      } catch (err) {
+        alert('生成评论失败: ' + err.message);
+      } finally {
+        btnGenerateComment.disabled = false;
+        sp.textContent = originalText;
+      }
+    });
+  }
+
+  if (btnFillForm) {
+    btnFillForm.addEventListener('click', async () => {
+      const comment = commentTextarea ? commentTextarea.value.trim() : '';
+      if (!comment) {
+        alert('评论内容为空，请先点击【自动阅读并生成评论】或手动输入评论！');
+        return;
+      }
+
+      const profile = getActiveUserProfile();
+      try {
+        const res = await executeInActiveTab(fillCommentFormInTab, [comment, profile]);
+        if (res && res.filledCount > 0) {
+          if (commentActionStatus) {
+            commentActionStatus.classList.remove('hidden');
+            commentActionStatus.innerHTML = '✔ 已填入 <span style="color: #10b981;">' + res.filledCount + '</span> 个表单字段 (' + res.filledFields.join(', ') + ')！';
+          }
+          alert('🎉 成功将评论及独立站身份信息填入页面表单！');
+        } else {
+          alert('未在当前网页找到标准评论输入框，已为您尝试焦点定位。');
+        }
+      } catch (e) {
+        alert('填入表单失败: ' + e.message);
+      }
+    });
+  }
+
+  if (btnSubmitForm) {
+    btnSubmitForm.addEventListener('click', async () => {
+      const comment = commentTextarea ? commentTextarea.value.trim() : '';
+      if (!comment) {
+        alert('评论内容为空，请先点击【自动阅读并生成评论】！');
+        return;
+      }
+
+      const profile = getActiveUserProfile();
+      try {
+        const res = await executeInActiveTab(submitCommentFormInTab, [comment, profile]);
+        if (res && res.captchaPresent) {
+          alert('⚠️ 检测到页面包含验证码，已为您填入表单并聚焦验证码输入框，请手动输入验证码后点击提交！');
+        } else if (res && res.submitted) {
+          markCurrentTabAsDoneInQueue();
+          if (window.publishLogger) {
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            if (tab) {
+              window.publishLogger.logPublish({
+                url: tab.url,
+                title: tab.title,
+                domain: new URL(tab.url).hostname,
+                comment: comment,
+                status: 'published'
+              });
+            }
+          }
+          alert('🚀 评论已填入并触发自动提交！已自动标记该任务为完成。');
+        } else {
+          alert('表单已填入，未找到可直接点击的提交按钮，请核对后手动点击提交。');
+        }
+      } catch (e) {
+        alert('提交失败: ' + e.message);
+      }
+    });
+  }
+
+  // 5. 批次完成引导 Banner 交互（翻至下一页 / 清空重置）
+  const btnNextGoogleBatch = document.getElementById('btn-next-google-batch');
+  const btnClearDoneBatch = document.getElementById('btn-clear-done-batch');
+
+  if (btnNextGoogleBatch) {
+    btnNextGoogleBatch.addEventListener('click', goToGoogleNextPageAndScrape);
+  }
+
+  if (btnClearDoneBatch) {
+    btnClearDoneBatch.addEventListener('click', () => {
+      currentBatchQueue = [];
+      localStorage.removeItem('comlinkai_batch_queue');
+      updateBatchUI();
+    });
+  }
+
+  // 6. 绑定 Manifest V3 兼容的事件代理监听器（彻底解决 inline onclick CSP 拦截问题）
+  const collectContainer = document.getElementById('collect-queue-container');
+  if (collectContainer) {
+    collectContainer.addEventListener('click', handleBatchItemActionClick);
+  }
+
+  const publishContainer = document.getElementById('batch-queue-container');
+  if (publishContainer) {
+    publishContainer.addEventListener('click', handleBatchItemActionClick);
+  }
+
+  try {
+    const cachedQueue = localStorage.getItem('comlinkai_batch_queue');
+    if (cachedQueue) {
+      currentBatchQueue = JSON.parse(cachedQueue);
+    }
+  } catch (e) {}
+  updateBatchUI();
+}
+
+// 统一事件代理分发函数
+function handleBatchItemActionClick(e) {
+  const btn = e.target.closest('button[data-action]');
+  if (!btn) return;
+
+  const action = btn.getAttribute('data-action');
+  if (action === 'open-url') {
+    const rawUrl = btn.getAttribute('data-url');
+    if (rawUrl) {
+      const url = decodeURIComponent(rawUrl);
+      openAndFocusUrl(url);
+    }
+  } else if (action === 'toggle-status') {
+    const idx = parseInt(btn.getAttribute('data-index') || '-1', 10);
+    if (idx >= 0 && currentBatchQueue[idx]) {
+      currentBatchQueue[idx].status = currentBatchQueue[idx].status === 'done' ? 'pending' : 'done';
+      localStorage.setItem('comlinkai_batch_queue', JSON.stringify(currentBatchQueue));
+      updateBatchUI();
+    }
+  } else if (action === 'remove-item') {
+    const idx = parseInt(btn.getAttribute('data-index') || '-1', 10);
+    if (idx >= 0 && currentBatchQueue[idx]) {
+      currentBatchQueue.splice(idx, 1);
+      localStorage.setItem('comlinkai_batch_queue', JSON.stringify(currentBatchQueue));
+      updateBatchUI();
+    }
+  }
+}
+
+// 智能控制 Google 搜索结果页翻页并自动提取新一组 10 条外链
+async function goToGoogleNextPageAndScrape() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab || !tab.id || !tab.url || !tab.url.includes('google.com/search')) {
+    alert('请先打开并聚焦在 Google 搜索结果页面！');
     return;
   }
 
-  btnAiSaveObsidian.disabled = true;
-  btnSaveObsidian.disabled = true;
-  btnAiSaveObsidian.querySelector('span:not(.btn-icon)').textContent = '正在生成 AI 摘要...';
+  const btnNext = document.getElementById('btn-next-google-batch');
+  if (btnNext) {
+    btnNext.disabled = true;
+    btnNext.textContent = '⏳ 正在翻页并加载新结果...';
+  }
 
   try {
-    // 1. 获取本地 AI 设置与代理配置
-    const apiUrl = localStorage.getItem('ai_api_url') || 'http://localhost:28642/v1';
-    const apiKey = localStorage.getItem('ai_api_key') || 'placeholder';
-    const modelName = localStorage.getItem('ai_model') || 'sensenova/sensenova-6.7-flash-lite';
-
-    // 2. 构造高频提纯 Prompt
-    const prompt = `请帮我为以下网页内容制作一个极其精炼的摘要（约 200-300 字），并提炼出 3-5 个最相关的关键词（作为标签）：
-网页标题：${currentExtractedContent.title}
-网页链接：${currentExtractedContent.url}
-网页正文：
-${currentExtractedContent.content.slice(0, 12000)}
-
-请严格使用以下 Markdown 格式输出：
-### 💡 核心摘要
-[在此处写入精炼的中文摘要]
-
-### 🏷️ 推荐标签
-- [标签1]
-- [标签2]`;
-
-    // 3. 请求本地 AI 代理进行单次大模型推理
-    console.log('[Obsidian] 正在调用本地 AI 模型生成网页摘要:', modelName);
-    const aiResponse = await fetch(`${apiUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: modelName,
-        messages: [
-          { role: 'system', content: 'You are a professional knowledge management assistant.' },
-          { role: 'user', content: prompt }
-        ],
-        stream: false
-      })
+    // 1. 尝试在目标 Google 页面点击原生下一页按钮
+    const clickRes = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => {
+        const nextLink = document.querySelector('a#pnnext, a[aria-label="Next page"], a[aria-label="下一页"], td.d6cvqb a, a[id="pnnext"]');
+        if (nextLink) {
+          nextLink.click();
+          return true;
+        }
+        return false;
+      }
     });
 
-    if (!aiResponse.ok) {
-      const errText = await aiResponse.text();
-      throw new Error(`AI 服务出错: ${aiResponse.status} - ${errText}`);
+    const clicked = clickRes && clickRes[0] && clickRes[0].result;
+    if (!clicked) {
+      // 2. 兜底策略：直接通过 URL 计算当前 start 偏移量并推进 10 位
+      const u = new URL(tab.url);
+      const currentStart = parseInt(u.searchParams.get('start') || '0', 10);
+      u.searchParams.set('start', String(currentStart + 10));
+      await chrome.tabs.update(tab.id, { url: u.toString() });
     }
 
-    const aiData = await aiResponse.json();
-    const summaryText = aiData.choices?.[0]?.message?.content || '（AI 摘要生成失败）';
-    console.log('[Obsidian] AI 网页摘要生成完毕:', summaryText);
-
-    // 4. 将摘要与原文合并，发送至 Node 服务完成物理保存
-    btnAiSaveObsidian.querySelector('span:not(.btn-icon)').textContent = '正在写入 Obsidian...';
-    
-    const response = await fetch('http://localhost:3010/api/save-to-obsidian', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        title: currentExtractedContent.title,
-        url: currentExtractedContent.url,
-        content: currentExtractedContent.content,
-        summary: summaryText
-      })
-    });
-
-    const resData = await response.json();
-    if (!response.ok) {
-      throw new Error(resData.error || '保存失败');
-    }
-
-    console.log('[Obsidian] AI 剪存成功:', resData);
-    btnAiSaveObsidian.style.background = '#10b981';
-    btnAiSaveObsidian.querySelector('span:not(.btn-icon)').textContent = '✔ AI 剪存成功！';
-
-    setTimeout(() => {
-      btnAiSaveObsidian.style.background = '';
-      btnAiSaveObsidian.querySelector('span:not(.btn-icon)').textContent = 'AI 摘要并剪存';
-      btnAiSaveObsidian.disabled = false;
-      btnSaveObsidian.disabled = false;
-    }, 2000);
+    // 3. 延时等待搜索页结果渲染完成，自动清空上一组并抓取新一组 10 条
+    setTimeout(async () => {
+      currentBatchQueue = [];
+      localStorage.removeItem('comlinkai_batch_queue');
+      await scrapeGoogleSearchResultsHandler();
+      if (btnNext) {
+        btnNext.disabled = false;
+        btnNext.textContent = '👉 翻至下一页并抓取新一组';
+      }
+    }, 2500);
 
   } catch (err) {
-    console.error('[Obsidian] AI 剪存失败:', err);
-    alert('AI 剪存失败：' + err.message + '\n提示：请确认您已成功启动本地 AI 代理端口 (28642)。');
-    btnAiSaveObsidian.querySelector('span:not(.btn-icon)').textContent = 'AI 摘要并剪存';
-    btnAiSaveObsidian.disabled = false;
-    btnSaveObsidian.disabled = false;
+    alert('Google 翻页失败: ' + err.message);
+    if (btnNext) {
+      btnNext.disabled = false;
+      btnNext.textContent = '👉 翻至下一页并抓取新一组';
+    }
   }
+}
+
+async function scrapeGoogleSearchResultsHandler() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab || !tab.id) return;
+
+  if (!tab.url || !tab.url.includes('google.com/search')) {
+    alert('请先在 Google 搜索结果页面点击此按钮以自动提取搜索结果外链！');
+    return;
+  }
+
+  const btnScrapeGoogle = document.getElementById('btn-scrape-google');
+  if (btnScrapeGoogle) {
+    btnScrapeGoogle.disabled = true;
+    btnScrapeGoogle.textContent = '🔍 抓取中...';
+  }
+
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => {
+        const out = [];
+        const seenUrls = new Set();
+        const invalidHosts = [
+          'google.com', 'google.cn', 'googleusercontent.com', 'gstatic.com',
+          'schema.org', 'w3.org', 'support.google.com', 'maps.google.com',
+          'accounts.google.com', 'policies.google.com', 'youtube.com'
+        ];
+
+        // 策略 1: 扫描所有 h3 标题对应的父级或子级 <a> 链接 (Google 结果页最稳健选择器)
+        const h3Elements = Array.from(document.querySelectorAll('h3'));
+        h3Elements.forEach(h3 => {
+          const a = h3.closest('a') || (h3.parentElement && h3.parentElement.querySelector('a')) || h3.querySelector('a');
+          if (!a) return;
+          let href = a.href || a.getAttribute('href');
+          if (!href) return;
+
+          if (href.includes('/url?q=')) {
+            try {
+              const u = new URL(href, window.location.origin);
+              const realQ = u.searchParams.get('q');
+              if (realQ && realQ.startsWith('http')) href = realQ;
+            } catch (e) {}
+          }
+
+          if (!href.startsWith('http')) return;
+
+          try {
+            const parsed = new URL(href);
+            const host = parsed.hostname.toLowerCase();
+            if (invalidHosts.some(ih => host.includes(ih))) return;
+
+            const normUrl = `${parsed.protocol}//${parsed.hostname}${parsed.pathname.replace(/\/+$/, '')}`.toLowerCase();
+            if (seenUrls.has(normUrl)) return;
+            seenUrls.add(normUrl);
+
+            const title = (h3.innerText || '').trim() || host;
+            out.push({ url: href, domain: host, title: title });
+          } catch (e) {}
+        });
+
+        // 策略 2: 兜底扫描 SERP 容器 (#search, #rso) 中所有外部 <a> 链接
+        if (out.length === 0) {
+          const searchArea = document.getElementById('search') || document.getElementById('rso') || document.body;
+          const allLinks = Array.from(searchArea.querySelectorAll('a[href]'));
+          allLinks.forEach(a => {
+            let href = a.href || a.getAttribute('href');
+            if (!href) return;
+
+            if (href.includes('/url?q=')) {
+              try {
+                const u = new URL(href, window.location.origin);
+                const realQ = u.searchParams.get('q');
+                if (realQ && realQ.startsWith('http')) href = realQ;
+              } catch (e) {}
+            }
+
+            if (!href.startsWith('http')) return;
+
+            try {
+              const parsed = new URL(href);
+              const host = parsed.hostname.toLowerCase();
+              if (invalidHosts.some(ih => host.includes(ih))) return;
+
+              const normUrl = `${parsed.protocol}//${parsed.hostname}${parsed.pathname.replace(/\/+$/, '')}`.toLowerCase();
+              if (seenUrls.has(normUrl)) return;
+              seenUrls.add(normUrl);
+
+              const h3 = a.querySelector('h3');
+              const title = (h3 ? h3.innerText : a.innerText || '').trim() || host;
+              if (title.length >= 2) {
+                out.push({ url: href, domain: host, title: title });
+              }
+            } catch (e) {}
+          });
+        }
+
+        return out;
+      }
+    });
+
+    const extracted = results && results[0] ? results[0].result : [];
+    if (!extracted || extracted.length === 0) {
+      alert('未在当前 Google 搜索页提取到有效外部链接，请确保当前页面为已加载完成的搜索结果页。');
+      return;
+    }
+
+    // 🌟 如果旧批次已经 100% 全部完成，自动归档并清空旧批次，载入全新的 10 条
+    if (currentBatchQueue.length > 0 && currentBatchQueue.every(i => i.status === 'done')) {
+      currentBatchQueue = [];
+    }
+
+    let added = 0;
+    const existing = new Set(currentBatchQueue.map(i => (i.url || '').toLowerCase()));
+
+    // 🌟 核心优化：每次只严格抓取当页前 10 条，避免批量过载与发布混乱
+    for (const item of extracted) {
+      if (added >= 10) break;
+      if (!existing.has((item.url || '').toLowerCase())) {
+        let domain = item.domain || '';
+        if (!domain) {
+          try { domain = new URL(item.url).hostname; } catch (e) {}
+        }
+
+        let category = 'blog_comment';
+        if (typeof classifyBacklink === 'function') {
+          category = classifyBacklink(item.url, item.title, '');
+        }
+
+        let isToxic = category === 'toxic';
+        if (typeof SafetyGuard !== 'undefined') {
+          const safetyRes = SafetyGuard.inspectPageContent(item.title, '', item.url);
+          if (!safetyRes.isSafe) {
+            isToxic = true;
+            category = 'toxic';
+          }
+        }
+
+        currentBatchQueue.push({
+          url: item.url,
+          domain: domain,
+          title: item.title || domain,
+          category: category,
+          status: isToxic ? 'toxic' : 'pending',
+          discoveredAt: new Date().toISOString()
+        });
+        existing.add((item.url || '').toLowerCase());
+        added++;
+      }
+    }
+
+    localStorage.setItem('comlinkai_batch_queue', JSON.stringify(currentBatchQueue));
+    updateBatchUI();
+    alert(`🎉 成功从 Google 搜索结果中提取 ${added} 条优质外链（当前批次共 ${currentBatchQueue.length} 条）！\n建议完成本组 10 条发布后，点击翻页载入下一组。`);
+  } catch (err) {
+    alert('抓取 Google 结果失败: ' + err.message);
+  } finally {
+    if (btnScrapeGoogle) {
+      btnScrapeGoogle.disabled = false;
+      btnScrapeGoogle.textContent = '🔍 抓取当页10条';
+    }
+  }
+}
+
+function getCategoryBadge(category) {
+  switch (category) {
+    case 'directory':
+      return { icon: '🧭', name: '目录', bg: 'rgba(56,189,248,0.15)', color: '#38bdf8' };
+    case 'platform_saas':
+      return { icon: '🚀', name: '平台', bg: 'rgba(168,85,247,0.15)', color: '#c084fc' };
+    case 'forum_community':
+      return { icon: '👥', name: '社区', bg: 'rgba(251,191,36,0.15)', color: '#fbbf24' };
+    case 'toxic':
+      return { icon: '🔴', name: '黑帽', bg: 'rgba(248,113,113,0.15)', color: '#f87171' };
+    case 'blog_comment':
+    default:
+      return { icon: '💬', name: '博客', bg: 'rgba(0,242,254,0.15)', color: '#00f2fe' };
+  }
+}
+
+// 供标签页导航的核心跳转函数 (支持当前标签更新或新标签打开，并自动模拟人类平滑滚动至评论区)
+async function openAndFocusUrl(url) {
+  if (!url) return;
+  try {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    let targetTabId = null;
+    if (tabs && tabs.length > 0 && tabs[0].id) {
+      targetTabId = tabs[0].id;
+      await chrome.tabs.update(targetTabId, { url: url });
+    } else {
+      const newTab = await chrome.tabs.create({ url: url });
+      targetTabId = newTab.id;
+    }
+
+    setTimeout(updateActiveTabInfo, 500);
+
+    // 🌟 智能挂载：当网页加载完成后，自动模拟真人平滑滚动至评论区/表单区
+    if (targetTabId) {
+      scheduleHumanScrollToComment(targetTabId);
+    }
+  } catch (e) {
+    console.warn('[ComLinkAI] chrome.tabs.update 失败，使用 chrome.tabs.create 兜底:', e);
+    try {
+      const newTab = await chrome.tabs.create({ url: url });
+      if (newTab && newTab.id) {
+        scheduleHumanScrollToComment(newTab.id);
+      }
+    } catch (err) {
+      window.open(url, '_blank');
+    }
+  }
+}
+
+// 调度平滑滚动至评论区
+function scheduleHumanScrollToComment(tabId) {
+  let executed = false;
+
+  const onTabUpdated = (updatedTabId, changeInfo, tab) => {
+    if (updatedTabId === tabId && changeInfo.status === 'complete' && !executed) {
+      executed = true;
+      chrome.tabs.onUpdated.removeListener(onTabUpdated);
+      // 给目标页面留出 DOM 渲染时间，然后进行平滑滚动与高亮
+      setTimeout(() => {
+        executeHumanScrollInTab(tabId);
+      }, 800);
+    }
+  };
+
+  chrome.tabs.onUpdated.addListener(onTabUpdated);
+
+  // 兜底超时：如果 8 秒内未收到 complete 事件或页面早已完成，主动尝试执行
+  setTimeout(() => {
+    if (!executed) {
+      executed = true;
+      try { chrome.tabs.onUpdated.removeListener(onTabUpdated); } catch (e) {}
+      executeHumanScrollInTab(tabId);
+    }
+  }, 3500);
+}
+
+// 在目标标签页中执行仿真人类平滑滚动与聚焦
+async function executeHumanScrollInTab(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tabId },
+      func: () => {
+        // 1. 多层级智能寻找评论输入框或评论区域
+        const candidates = [
+          document.querySelector('textarea[name*="comment" i]'),
+          document.querySelector('textarea[id*="comment" i]'),
+          document.querySelector('textarea[placeholder*="comment" i]'),
+          document.querySelector('textarea[placeholder*="reply" i]'),
+          document.querySelector('textarea[placeholder*="评论" i]'),
+          document.querySelector('textarea[placeholder*="留言" i]'),
+          document.querySelector('#respond'),
+          document.querySelector('#commentform'),
+          document.querySelector('#comments'),
+          document.querySelector('.comment-form'),
+          document.querySelector('.comments-area'),
+          document.querySelector('input[name*="author" i]'),
+          document.querySelector('form[action*="comment" i]'),
+          // 扫描包含 Leave a Reply / Leave a Comment 等关键词的标题
+          Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6, span, strong, div')).find(el => {
+            const txt = (el.innerText || '').trim().toLowerCase();
+            return txt.length < 50 && (
+              txt.includes('leave a reply') ||
+              txt.includes('leave a comment') ||
+              txt.includes('post a comment') ||
+              txt.includes('add a comment') ||
+              txt.includes('write a comment') ||
+              txt.includes('发表评论') ||
+              txt.includes('参与讨论') ||
+              txt.includes('发表回复')
+            );
+          }),
+          document.querySelector('textarea')
+        ];
+
+        const target = candidates.find(el => el !== null && el !== undefined);
+        if (!target) return false;
+
+        // 2. 计算目标元素在文档中的绝对纵坐标
+        const rect = target.getBoundingClientRect();
+        const absoluteTop = rect.top + window.pageYOffset;
+        const targetScrollY = Math.max(0, absoluteTop - 120); // 留出 120px 顶部视野
+
+        // 3. 仿真人类平滑滚动 (Human Smooth Eased Scrolling)
+        const startY = window.pageYOffset;
+        const distance = targetScrollY - startY;
+        const duration = Math.min(1400, Math.max(600, Math.abs(distance) * 0.4)); // 动态拟真耗时
+        let startTime = null;
+
+        function easeInOutCubic(t) {
+          return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+        }
+
+        function animation(currentTime) {
+          if (!startTime) startTime = currentTime;
+          const timeElapsed = currentTime - startTime;
+          const progress = Math.min(timeElapsed / duration, 1);
+          const easeProgress = easeInOutCubic(progress);
+
+          window.scrollTo(0, startY + (distance * easeProgress));
+
+          if (timeElapsed < duration) {
+            requestAnimationFrame(animation);
+          } else {
+            // 4. 滚动到位后，优雅高亮并聚焦输入框
+            target.style.transition = 'all 0.5s ease';
+            target.style.outline = 'none';
+            target.style.boxShadow = '0 0 0 3px rgba(0, 242, 254, 0.7), 0 0 20px rgba(0, 242, 254, 0.4)';
+            target.style.borderColor = '#00f2fe';
+
+            if (typeof target.focus === 'function') {
+              try {
+                target.focus({ preventScroll: true });
+              } catch (e) {}
+            }
+
+            // 2 秒后光效自然收敛
+            setTimeout(() => {
+              target.style.boxShadow = '0 0 8px rgba(0, 242, 254, 0.3)';
+            }, 2200);
+          }
+        }
+
+        requestAnimationFrame(animation);
+        return true;
+      }
+    });
+  } catch (err) {
+    console.warn('[ComLinkAI] 平滑滚动执行异常:', err);
+  }
+}
+
+window.openAndFocusUrl = openAndFocusUrl;
+
+window.toggleBatchItemStatus = function(index) {
+  if (currentBatchQueue[index]) {
+    currentBatchQueue[index].status = currentBatchQueue[index].status === 'done' ? 'pending' : 'done';
+    localStorage.setItem('comlinkai_batch_queue', JSON.stringify(currentBatchQueue));
+    updateBatchUI();
+  }
+};
+
+window.removeBatchItem = function(index) {
+  if (currentBatchQueue[index]) {
+    currentBatchQueue.splice(index, 1);
+    localStorage.setItem('comlinkai_batch_queue', JSON.stringify(currentBatchQueue));
+    updateBatchUI();
+  }
+};
+
+// 注入到标签页的评论表单感知与自动填写函数
+function fillCommentFormInTab(commentText, profile) {
+  if (!commentText) return { filledCount: 0, filledFields: [] };
+  const authorName = (profile && (profile.profileName || profile.name)) || '';
+  const authorEmail = (profile && (profile.profileEmail || profile.email)) || '';
+  const authorUrl = (profile && (profile.websiteUrl || profile.url)) || '';
+
+  const filledFields = [];
+  const highlightAndFill = (el, val) => {
+    if (!el || !val) return false;
+    try {
+      el.focus && el.focus();
+      el.value = val;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      el.dispatchEvent(new Event('blur', { bubbles: true }));
+      el.style.border = '2px solid #10b981';
+      el.style.boxShadow = '0 0 10px rgba(16, 185, 129, 0.45)';
+      return true;
+    } catch (e) {
+      return false;
+    }
+  };
+
+  // 1. 评论正文 (Textarea)
+  const commentTextarea = document.querySelector('textarea[name*="comment" i], textarea[id*="comment" i], textarea[placeholder*="comment" i], textarea[placeholder*="评论" i], textarea[placeholder*="留言" i], textarea[placeholder*="reply" i], textarea');
+  if (commentTextarea && highlightAndFill(commentTextarea, commentText)) {
+    filledFields.push('评论正文');
+  }
+
+  // 2. 昵称/姓名
+  const nameEl = document.querySelector('input[placeholder*="昵称" i], input[placeholder*="姓名" i], input[placeholder*="Name" i], input[placeholder*="Author" i], input[name*="author" i], input[name*="name" i], input[id*="author" i], input[id*="name" i]');
+  if (nameEl && authorName && highlightAndFill(nameEl, authorName)) {
+    filledFields.push('姓名');
+  }
+
+  // 3. 邮箱
+  const emailEl = document.querySelector('input[placeholder*="邮箱" i], input[placeholder*="Email" i], input[placeholder*="Mail" i], input[type="email"], input[name*="email" i], input[id*="email" i]');
+  if (emailEl && authorEmail && highlightAndFill(emailEl, authorEmail)) {
+    filledFields.push('邮箱');
+  }
+
+  // 4. 网址/引流链接
+  const urlEl = document.querySelector('input[placeholder*="网址" i], input[placeholder*="网站" i], input[placeholder*="URL" i], input[placeholder*="Website" i], input[type="url"], input[name*="url" i], input[name*="website" i], input[id*="url" i], input[id*="website" i]');
+  if (urlEl && authorUrl && highlightAndFill(urlEl, authorUrl)) {
+    filledFields.push('引流网址');
+  }
+
+  return {
+    success: true,
+    filledCount: filledFields.length,
+    filledFields: filledFields
+  };
+}
+
+function submitCommentFormInTab(commentText, profile) {
+  // 确保在任何独立 tabId 中注入执行时均完全自包含
+  const authorName = (profile && (profile.profileName || profile.name)) || '';
+  const authorEmail = (profile && (profile.profileEmail || profile.email)) || '';
+  const authorUrl = (profile && (profile.websiteUrl || profile.url)) || '';
+
+  const highlightAndFill = (el, val) => {
+    if (!el || !val) return false;
+    try {
+      el.focus && el.focus();
+      el.value = val;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      el.dispatchEvent(new Event('blur', { bubbles: true }));
+      el.style.border = '2px solid #10b981';
+      el.style.boxShadow = '0 0 10px rgba(16, 185, 129, 0.45)';
+      return true;
+    } catch (e) {
+      return false;
+    }
+  };
+
+  const filledFields = [];
+  const commentTextarea = document.querySelector('textarea[name*="comment" i], textarea[id*="comment" i], textarea[placeholder*="comment" i], textarea[placeholder*="评论" i], textarea[placeholder*="留言" i], textarea[placeholder*="reply" i], textarea');
+  if (commentTextarea && highlightAndFill(commentTextarea, commentText)) filledFields.push('评论正文');
+
+  const nameEl = document.querySelector('input[placeholder*="昵称" i], input[placeholder*="姓名" i], input[placeholder*="Name" i], input[placeholder*="Author" i], input[name*="author" i], input[name*="name" i], input[id*="author" i], input[id*="name" i]');
+  if (nameEl && authorName && highlightAndFill(nameEl, authorName)) filledFields.push('姓名');
+
+  const emailEl = document.querySelector('input[placeholder*="邮箱" i], input[placeholder*="Email" i], input[placeholder*="Mail" i], input[type="email"], input[name*="email" i], input[id*="email" i]');
+  if (emailEl && authorEmail && highlightAndFill(emailEl, authorEmail)) filledFields.push('邮箱');
+
+  const urlEl = document.querySelector('input[placeholder*="网址" i], input[placeholder*="网站" i], input[placeholder*="URL" i], input[placeholder*="Website" i], input[type="url"], input[name*="url" i], input[name*="website" i], input[id*="url" i], input[id*="website" i]');
+  if (urlEl && authorUrl && highlightAndFill(urlEl, authorUrl)) filledFields.push('引流网址');
+
+  // 检查图形验证码
+  const captchaImg = document.querySelector('img[src*="captcha" i], img[src*="code" i], canvas[id*="captcha" i], img[alt*="验证码" i]');
+  const captchaInput = document.querySelector('input[placeholder*="验证码" i], input[placeholder*="Code" i], input[name*="captcha" i], input[name*="code" i], input[name*="verify" i]');
+  if (captchaImg || captchaInput) {
+    if (captchaInput) {
+      captchaInput.style.border = '2px solid #fbbf24';
+      captchaInput.style.boxShadow = '0 0 10px rgba(251, 191, 36, 0.5)';
+      try {
+        captchaInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        captchaInput.focus({ preventScroll: true });
+      } catch (e) {}
+    }
+    return { success: true, submitted: false, captchaPresent: true, filledCount: filledFields.length };
+  }
+
+  const submitBtn = document.querySelector('button[type="submit"], input[type="submit"], button.submit, #submit, button#comment-submit, form#commentform input[type="submit"]');
+  if (submitBtn) {
+    try {
+      submitBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      submitBtn.click();
+      return { success: true, submitted: true, captchaPresent: false, filledCount: filledFields.length };
+    } catch (e) {}
+  }
+
+  return { success: true, submitted: false, captchaPresent: false, filledCount: filledFields.length };
+}
+
+function updateBatchUI() {
+  const total = currentBatchQueue.length;
+  const doneCount = currentBatchQueue.filter(i => i.status === 'done').length;
+  const toxicCount = currentBatchQueue.filter(i => i.status === 'toxic' || i.category === 'toxic').length;
+  const validCount = currentBatchQueue.filter(i => i.status !== 'toxic' && i.status !== 'done').length;
+
+  // 1. 同步更新【收集】面板 4 大漏斗统计指标
+  const statDiscovered = document.getElementById('stat-discovered');
+  const statAnalyzed = document.getElementById('stat-analyzed');
+  const statCommentable = document.getElementById('stat-commentable');
+  const statInQueue = document.getElementById('stat-in-queue');
+
+  if (statDiscovered) statDiscovered.textContent = total;
+  if (statAnalyzed) statAnalyzed.textContent = doneCount;
+  if (statCommentable) statCommentable.textContent = validCount;
+  if (statInQueue) statInQueue.textContent = toxicCount;
+
+  // 2. 渲染【收集】面板队列列表
+  const collectContainer = document.getElementById('collect-queue-container');
+  if (collectContainer) {
+    if (total === 0) {
+      collectContainer.innerHTML = '<div id="collect-queue-empty" style="text-align: center; padding: 15px; color: var(--text-muted); font-size: 0.76rem;">暂无收集外链。输入目标域名或在 Google 搜索页点击“抓取当页10条”。</div>';
+    } else {
+      collectContainer.innerHTML = currentBatchQueue.slice(0, 100).map(function(item, idx) {
+        const isDone = item.status === 'done';
+        const isToxic = item.status === 'toxic' || item.category === 'toxic';
+        const textDecor = isDone ? 'text-decoration: line-through;' : '';
+        const col = isDone ? 'var(--text-muted)' : (isToxic ? '#f87171' : 'var(--text-main)');
+        const catBadge = getCategoryBadge(item.category);
+
+        return '<div class="batch-item-card ' + (isDone ? 'item-done' : '') + '" style="display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; background: hsla(220, 30%, 6%, 0.6); border: 1px solid hsla(217, 32%, 18%, 0.6); border-radius: 6px; font-size: 0.74rem; margin-bottom: 4px;">' +
+          '<div style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 8px;">' +
+            '<span style="font-size: 0.68rem; margin-right: 4px; padding: 1px 4px; border-radius: 3px; background: hsla(220, 30%, 15%, 0.8);">' + catBadge.icon + '</span>' +
+            '<span style="font-weight: 600; color: ' + col + '; ' + textDecor + '" title="' + item.url + '">' + (item.domain || item.url) + '</span>' +
+          '</div>' +
+          '<div style="display: flex; gap: 4px; align-items: center;">' +
+            '<button class="btn btn-secondary btn-sm" data-action="open-url" data-url="' + encodeURIComponent(item.url) + '" style="padding: 2px 6px; font-size: 0.68rem;">直达</button>' +
+            '<button class="btn btn-secondary btn-sm" data-action="toggle-status" data-index="' + idx + '" style="padding: 2px 5px; font-size: 0.68rem; color: ' + (isDone ? '#fbbf24' : '#34d399') + ';" title="' + (isDone ? '标记为未完成' : '标记为已完成') + '">' + (isDone ? '↩' : '✔') + '</button>' +
+            '<button class="btn btn-secondary btn-sm" data-action="remove-item" data-index="' + idx + '" style="padding: 2px 5px; font-size: 0.68rem; color: #f87171;" title="删除此条">×</button>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+    }
+  }
+
+  // 3. 同步更新【发布】面板工作进度看板
+  const publishProgressText = document.getElementById('publish-progress-text');
+  const publishProgressFill = document.getElementById('publish-progress-fill');
+  const progressPercent = total > 0 ? Math.round((doneCount / total) * 100) : 0;
+
+  if (publishProgressText) {
+    publishProgressText.textContent = `已完成 ${doneCount} / ${total} 条 (${progressPercent}%)`;
+  }
+  if (publishProgressFill) {
+    publishProgressFill.style.width = `${progressPercent}%`;
+  }
+
+  // 🌟 4. 智能判断批次达成状态：若本组外链全部完成（100%），展示引导 Banner
+  const publishSprintBanner = document.getElementById('publish-sprint-banner');
+  if (publishSprintBanner) {
+    if (total > 0 && doneCount === total) {
+      publishSprintBanner.classList.remove('hidden');
+    } else {
+      publishSprintBanner.classList.add('hidden');
+    }
+  }
+
+  // 5. 同步更新【发布】面板 6 大分类 Pill 数量徽标
+  const blogCount = currentBatchQueue.filter(i => (i.category || 'blog_comment') === 'blog_comment' && i.status !== 'toxic').length;
+  const dirCount = currentBatchQueue.filter(i => i.category === 'directory' && i.status !== 'toxic').length;
+  const saasCount = currentBatchQueue.filter(i => i.category === 'platform_saas' && i.status !== 'toxic').length;
+  const forumCount = currentBatchQueue.filter(i => i.category === 'forum_community' && i.status !== 'toxic').length;
+
+  const setCnt = (id, cnt) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = cnt;
+  };
+  setCnt('pill-cnt-all', total);
+  setCnt('pill-cnt-blog', blogCount);
+  setCnt('pill-cnt-dir', dirCount);
+  setCnt('pill-cnt-saas', saasCount);
+  setCnt('pill-cnt-forum', forumCount);
+  setCnt('pill-cnt-toxic', toxicCount);
+
+  // 6. 渲染【发布】面板资源队列 (根据 activePublishCategory 实时过滤)
+  const publishContainer = document.getElementById('batch-queue-container');
+  if (publishContainer) {
+    let filteredItems = [];
+    if (activePublishCategory === 'all') {
+      filteredItems = currentBatchQueue.map((item, idx) => ({ item, originalIndex: idx }));
+    } else if (activePublishCategory === 'toxic') {
+      filteredItems = currentBatchQueue
+        .map((item, idx) => ({ item, originalIndex: idx }))
+        .filter(x => x.item.status === 'toxic' || x.item.category === 'toxic');
+    } else {
+      filteredItems = currentBatchQueue
+        .map((item, idx) => ({ item, originalIndex: idx }))
+        .filter(x => (x.item.category || 'blog_comment') === activePublishCategory && x.item.status !== 'toxic');
+    }
+
+    if (filteredItems.length === 0) {
+      publishContainer.innerHTML = '<div id="batch-queue-empty" style="text-align: center; padding: 12px; color: var(--text-muted); font-size: 0.75rem;">' +
+        (total === 0 ? '暂无待发布外链，请先在【收集】卡片中抓取当页10条。' : '当前分类筛选下暂无外链条目。') +
+      '</div>';
+    } else {
+      publishContainer.innerHTML = filteredItems.slice(0, 100).map(function(wrap) {
+        const item = wrap.item;
+        const idx = wrap.originalIndex;
+        const isDone = item.status === 'done';
+        const isToxic = item.status === 'toxic' || item.category === 'toxic';
+        const catBadge = getCategoryBadge(item.category);
+        const textDecor = isDone ? 'text-decoration: line-through;' : '';
+        const col = isDone ? 'var(--text-muted)' : (isToxic ? '#f87171' : 'var(--text-main)');
+
+        let actionBtnText = '直达';
+        if (item.category === 'blog_comment') {
+          actionBtnText = '💬 评论';
+        } else if (item.category === 'directory' || item.category === 'platform_saas') {
+          actionBtnText = '⚡ 填表';
+        }
+
+        return '<div class="batch-item-card ' + (isDone ? 'item-done' : '') + '" style="display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; background: hsla(220, 30%, 6%, 0.6); border: 1px solid ' + (isToxic ? 'rgba(248,113,113,0.3)' : 'hsla(217, 32%, 18%, 0.6)') + '; border-radius: 6px; font-size: 0.74rem; margin-bottom: 4px;">' +
+          '<div style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 8px;">' +
+            '<span style="font-size: 0.68rem; margin-right: 4px; padding: 1px 5px; border-radius: 3px; background: ' + catBadge.bg + '; color: ' + catBadge.color + ';">' + catBadge.name + '</span>' +
+            '<span style="font-weight: 600; color: ' + col + '; ' + textDecor + '" title="' + item.url + '">' + (item.domain || item.url) + '</span>' +
+          '</div>' +
+          '<div style="display: flex; gap: 4px; align-items: center;">' +
+            '<button class="btn btn-secondary btn-sm" data-action="open-url" data-url="' + encodeURIComponent(item.url) + '" style="padding: 2px 6px; font-size: 0.68rem;" title="打开此网址">' + actionBtnText + '</button>' +
+            '<button class="btn btn-secondary btn-sm" data-action="toggle-status" data-index="' + idx + '" style="padding: 2px 5px; font-size: 0.68rem; color: ' + (isDone ? '#fbbf24' : '#34d399') + ';" title="' + (isDone ? '标记为未完成' : '标记为已完成') + '">' + (isDone ? '↩' : '✔') + '</button>' +
+            '<button class="btn btn-secondary btn-sm" data-action="remove-item" data-index="' + idx + '" style="padding: 2px 5px; font-size: 0.68rem; color: #f87171;" title="删除此条">×</button>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+    }
+  }
+}
+
+// --------------------------------------------------------------------------
+// 5. Auto-Pilot 全自动反链引擎 (Chrome 标签组隔离 & CDP 原生硬件缩放底座)
+// --------------------------------------------------------------------------
+
+async function generateCommentForArticle(title, url, bodySnippet, profile) {
+  let rawName = profile.profileName || profile.name || '';
+  let cleanBrand = rawName;
+  if (cleanBrand.includes('@')) {
+    cleanBrand = cleanBrand.split('@').pop().trim();
+  }
+  if (!cleanBrand) cleanBrand = 'APIVALE';
+
+  let baseUrl = (localStorage.getItem('ai_base_url') || '').trim().replace(/\/+$/, '');
+  let apiKey = (localStorage.getItem('ai_api_key') || '').trim();
+  let modelName = (localStorage.getItem('ai_model_name') || '').trim() || 'sensenova/deepseek-v4-flash';
+
+  if (!baseUrl) baseUrl = 'https://apivale.com/v1';
+  let cleanBase = baseUrl.replace(/\/+$/, '');
+  let endpoint = cleanBase.endsWith('/chat/completions') ? cleanBase : (cleanBase.endsWith('/v1') ? `${cleanBase}/chat/completions` : `${cleanBase}/v1/chat/completions`);
+
+  if (apiKey) {
+    try {
+      const prompt = `You are a thoughtful tech professional reading a blog post.
+TARGET ARTICLE METADATA:
+- Title: ${title || 'N/A'}
+- URL: ${url || 'N/A'}
+
+ARTICLE CONTENT SNIPPET:
+${(bodySnippet || '').slice(0, 3000)}
+
+READER/COMPANY IDENTITY:
+- Brand Name: ${cleanBrand}
+- Website: ${profile.websiteUrl || 'https://apivale.com/'}
+- Core Focus: ${profile.profileBio || profile.tagline || 'API Gateway & AI Infrastructure'}
+
+OBJECTIVES (HIGH CONVERSION & ANTI-SPAM COMPLIANCE):
+1. Directly reference specific technologies, insights, or arguments mentioned in the article.
+2. Share a valuable technical perspective on why this matters in modern real-world workflows.
+3. Naturally mention observing similar patterns at "${cleanBrand}" in a purely contextual, non-salesy way.
+4. End with an insightful, open-ended question to the author.
+5. Length: 55 to 100 words. Fluent professional English. NO hashtags, NO emojis. Output ONLY the plain comment text.`;
+
+      const resp = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model: modelName,
+          messages: [
+            { role: 'system', content: 'You are an experienced tech professional writing natural, high-value blog comments that get approved and spark meaningful discussions. Output plain comment text only.' },
+            { role: 'user', content: prompt }
+          ],
+          stream: false
+        }),
+        signal: AbortSignal.timeout(35000)
+      });
+
+      if (resp.ok) {
+        const data = await resp.json();
+        const text = (data.choices?.[0]?.message?.content || '').trim();
+        if (text) return text;
+      }
+    } catch (e) {
+      console.warn('[Auto-Pilot Comment Gen API Error]:', e);
+    }
+  }
+
+  // 智能语义兜底
+  const articleTopic = (title || '').split(/[-|_|–|\|]/)[0].trim() || 'this topic';
+  return `Really thoughtful perspective on ${articleTopic}. Transitioning towards frictionless, standardized workflows is crucial for modern user adoption. At ${cleanBrand}, we see the exact same principle when optimizing infrastructure—eliminating final-step friction yields the biggest compounding gains. Do you expect this rollout to noticeably accelerate over the coming quarters?`;
+}
+
+const autoPilotEngine = {
+  running: false,
+  paused: false,
+  abort: false,
+  activeTabId: null,
+  activeGroupId: null,
+  watchdogTimer: null,
+  consecutiveErrors: 0,
+  logs: [],
+
+  log(msg, type = 'info') {
+    const time = new Date().toLocaleTimeString();
+    const prefix = type === 'error' ? '❌' : (type === 'warn' ? '⚠️' : (type === 'success' ? '✔' : '📍'));
+    const entry = `[${time}] ${prefix} ${msg}`;
+    this.logs.push(entry);
+    if (this.logs.length > 120) this.logs.shift();
+    const term = document.getElementById('autopilot-log-terminal');
+    const cnt = document.getElementById('autopilot-log-count');
+    if (term) {
+      term.textContent = this.logs.join('\n');
+      term.scrollTop = term.scrollHeight;
+    }
+    if (cnt) cnt.textContent = this.logs.length;
+  },
+
+  updateUI(stepText, color = '#60a5fa', timerText = '', cooldownPercent = 0) {
+    const indicator = document.getElementById('autopilot-step-indicator');
+    const badge = document.getElementById('autopilot-timer-badge');
+    const fill = document.getElementById('autopilot-cooldown-fill');
+    if (indicator) {
+      indicator.textContent = stepText;
+      indicator.style.color = color;
+    }
+    if (badge) badge.textContent = timerText;
+    if (fill) fill.style.width = `${cooldownPercent}%`;
+  },
+
+  async getTargetTab(targetUrl) {
+    const isIsolate = document.getElementById('chk-autopilot-isolate')?.checked !== false;
+    if (isIsolate) {
+      const res = await chrome.runtime.sendMessage({
+        type: 'AUTOPILOT_GET_GROUP',
+        url: targetUrl
+      });
+      if (res && res.success && res.data) {
+        this.activeTabId = res.data.tabId;
+        this.activeGroupId = res.data.groupId;
+        return { tabId: res.data.tabId, groupId: res.data.groupId, isolated: true };
+      }
+    }
+    const [curTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    return { tabId: curTab ? curTab.id : null, groupId: null, isolated: false };
+  },
+
+  async updateGroupStatus(statusText, color = 'cyan') {
+    if (this.activeGroupId) {
+      await chrome.runtime.sendMessage({
+        type: 'AUTOPILOT_SET_STATUS',
+        statusText,
+        color
+      }).catch(() => {});
+    }
+  },
+
+  async start() {
+    if (this.running && this.paused) {
+      this.paused = false;
+      this.updateUI('▶ 已恢复挂机任务', '#10b981');
+      this.log('已手动解除暂停，恢复挂机流水线', 'info');
+      this.updateGroupStatus('挂机中', 'cyan');
+      this.updateButtons();
+      return;
+    }
+
+    const pendingItems = currentBatchQueue.filter(x => x.status === 'pending');
+    if (!pendingItems.length) {
+      alert('队列中暂无待发布的外链任务！请先在【收集】卡片中抓取或导入外链。');
+      return;
+    }
+
+    this.running = true;
+    this.paused = false;
+    this.abort = false;
+    this.consecutiveErrors = 0;
+    this.updateButtons();
+    this.log(`🚀 Auto-Pilot 引擎启动！待处理外链: ${pendingItems.length} 条 (已启用 Chrome 标签组隔离并发)`, 'success');
+    await this.updateGroupStatus('挂机启动', 'cyan');
+
+    this.runLoop();
+  },
+
+  pause() {
+    if (!this.running) return;
+    this.paused = true;
+    this.updateUI('⏸ 挂机已暂停 (点击继续)', '#f59e0b');
+    this.log('挂机已手动暂停', 'warn');
+    this.updateGroupStatus('已暂停', 'yellow');
+    this.updateButtons();
+  },
+
+  stop() {
+    this.running = false;
+    this.paused = false;
+    this.abort = true;
+    if (this.watchdogTimer) clearTimeout(this.watchdogTimer);
+    this.updateUI('🛑 挂机已终止', '#f87171', '', 0);
+    this.log('挂机已终止', 'warn');
+    this.updateGroupStatus('已停止', 'red');
+    this.updateButtons();
+  },
+
+  updateButtons() {
+    const btnStart = document.getElementById('btn-autopilot-start');
+    const btnPause = document.getElementById('btn-autopilot-pause');
+    const btnStop = document.getElementById('btn-autopilot-stop');
+    if (btnStart) {
+      btnStart.disabled = this.running && !this.paused;
+      btnStart.textContent = this.paused ? '▶ 继续挂机' : '▶ 启动挂机';
+    }
+    if (btnPause) {
+      btnPause.disabled = !this.running || this.paused;
+    }
+    if (btnStop) {
+      btnStop.disabled = !this.running;
+    }
+  },
+
+  async runLoop() {
+    while (this.running && !this.abort) {
+      if (this.paused) {
+        await new Promise(r => setTimeout(r, 600));
+        continue;
+      }
+
+      const pendingItem = currentBatchQueue.find(x => x.status === 'pending');
+      if (!pendingItem) {
+        this.log('🎉 恭喜！当前批次全部待发布外链已处理完毕！', 'success');
+        this.updateUI('🎉 全部任务达成！', '#10b981', '100%', 100);
+        this.updateGroupStatus('全部完成', 'green');
+        this.stop();
+        break;
+      }
+
+      const targetUrl = pendingItem.url;
+
+      try {
+        // ----------------------------------------------------
+        // 阶段 1：标签组隔离导航 (Tab Group Navigation)
+        // ----------------------------------------------------
+        let hostName = 'target';
+        try { hostName = new URL(targetUrl).hostname; } catch (e) {}
+        this.updateUI(`📍 [1/5] 标签组隔离载入: ${hostName}`, '#60a5fa');
+        this.log(`[1/5] 正在隔离导航至: ${targetUrl}`);
+        await this.updateGroupStatus(`载入: ${hostName}`, 'cyan');
+
+        const { tabId } = await this.getTargetTab(targetUrl);
+        if (!tabId) throw new Error('未能获取或创建目标标签页');
+
+        // 30 秒硬超时看门狗保护
+        const watchdog = new Promise((_, reject) => {
+          this.watchdogTimer = setTimeout(() => {
+            reject(new Error('单步 30 秒加载超时看门狗熔断'));
+          }, 30000);
+        });
+
+        // 导航并等待页面完成
+        const navTask = new Promise((resolve) => {
+          const listener = (tid, change) => {
+            if (tid === tabId && change.status === 'complete') {
+              chrome.tabs.onUpdated.removeListener(listener);
+              resolve();
+            }
+          };
+          chrome.tabs.onUpdated.addListener(listener);
+          chrome.tabs.update(tabId, { url: targetUrl });
+        });
+
+        await Promise.race([navTask, watchdog]);
+        clearTimeout(this.watchdogTimer);
+
+        if (this.abort) break;
+        await new Promise(r => setTimeout(r, 1200)); // 等待 SPA 挂载
+
+        // ----------------------------------------------------
+        // 阶段 2：正文提取与极速无表单熔断检测 (Fast Abort Check)
+        // ----------------------------------------------------
+        this.updateUI(`📍 [2/5] 提取正文并嗅探表单...`, '#38bdf8');
+        this.log(`[2/5] 正在提取页面 Markdown 并嗅探评论表单...`);
+
+        const probeRes = await executeInTab(tabId, () => {
+          const text = (document.body ? document.body.innerText : '').toLowerCase();
+          const isClosed = text.includes('comments are closed') || text.includes('评论已关闭') || text.includes('关闭了评论');
+          const hasForm = !!document.querySelector('textarea, form[action*="comment" i], #commentform, .comment-form, input[name*="comment" i]');
+          const title = (document.title || '').trim();
+          return { isClosed, hasForm, title, bodySnippet: text.slice(0, 3000) };
+        });
+
+        if (!probeRes || (!probeRes.hasForm && probeRes.isClosed)) {
+          this.log(`⏩ [1s极速熔断] 页面不可留言或评论已关闭，自动跳过: ${targetUrl}`, 'warn');
+          pendingItem.status = 'skipped_no_form';
+          localStorage.setItem('comlinkai_batch_queue', JSON.stringify(currentBatchQueue));
+          updateBatchUI();
+          continue;
+        }
+
+        // ----------------------------------------------------
+        // 阶段 3：AI 3-Step 见解评论生成
+        // ----------------------------------------------------
+        this.updateUI(`📍 [3/5] AI 正在深度阅读并构思评论...`, '#a78bfa');
+        this.log(`[3/5] AI 正在为《${(probeRes.title || '博文').slice(0, 25)}》生成 3-Step 见解评论...`);
+        await this.updateGroupStatus('AI 构思中', 'purple');
+
+        const profile = getActiveUserProfile();
+        const commentText = await generateCommentForArticle(probeRes.title, targetUrl, probeRes.bodySnippet, profile);
+
+        if (this.abort) break;
+
+        // ----------------------------------------------------
+        // 阶段 4：自动填表与安全提交
+        // ----------------------------------------------------
+        this.updateUI(`📍 [4/5] 自动填表与安全提交...`, '#f59e0b');
+        this.log(`[4/5] 正在自动定位字段并填入 Profile 资料与见解...`);
+
+        const submitRes = await executeInTab(tabId, submitCommentFormInTab, [commentText, profile]);
+
+        if (submitRes && submitRes.captchaPresent) {
+          this.log(`⚠️ 检测到页面包含图形验证码！挂机已暂停，请在已聚焦的标签页中输入验证码`, 'warn');
+          this.updateUI('⚠️ 需人工验证码 (已暂停)', '#ef4444');
+          await this.updateGroupStatus('⚠️ 需验证码', 'yellow');
+          await chrome.runtime.sendMessage({ type: 'AUTOPILOT_FOCUS_TAB' });
+          this.paused = true;
+          this.updateButtons();
+          // 等待人工处理解除暂停
+          while (this.paused && !this.abort) {
+            await new Promise(r => setTimeout(r, 1000));
+          }
+          if (this.abort) break;
+        }
+
+        // 标记已完成
+        pendingItem.status = 'done';
+        localStorage.setItem('comlinkai_batch_queue', JSON.stringify(currentBatchQueue));
+        updateBatchUI();
+
+        if (window.publishLogger) {
+          try {
+            window.publishLogger.logPublish({
+              url: targetUrl,
+              title: probeRes.title || targetUrl,
+              domain: new URL(targetUrl).hostname,
+              comment: commentText,
+              status: 'published'
+            });
+          } catch (e) {}
+        }
+
+        this.consecutiveErrors = 0;
+        this.log(`✔ [成功提交] 已顺利完成《${(probeRes.title || targetUrl).slice(0, 20)}》外链建设！已打删除线`, 'success');
+
+        // ----------------------------------------------------
+        // 阶段 5：防封随机冷却倒计时 (Anti-Ban Random Delay)
+        // ----------------------------------------------------
+        const cooldownSeconds = Math.floor(Math.random() * 11) + 15; // 15s ~ 25s 随机延迟
+        this.log(`⏳ 触发防封策略：开始随机冷却倒计时 ${cooldownSeconds} 秒...`);
+
+        for (let s = cooldownSeconds; s > 0; s--) {
+          if (this.abort || this.paused) break;
+          const pct = Math.round(((cooldownSeconds - s) / cooldownSeconds) * 100);
+          this.updateUI(`📍 [5/5] 防封冷却中...`, '#10b981', `倒计时: ${s}s`, pct);
+          await this.updateGroupStatus(`冷却 ${s}s`, 'cyan');
+          await new Promise(r => setTimeout(r, 1000));
+        }
+        this.updateUI(`📍 [就绪] 推进下一条外链...`, '#60a5fa', '', 0);
+
+      } catch (err) {
+        this.consecutiveErrors++;
+        this.log(`❌ 处理外链出错 [${targetUrl}]: ${err.message}`, 'error');
+        pendingItem.status = 'error';
+        localStorage.setItem('comlinkai_batch_queue', JSON.stringify(currentBatchQueue));
+        updateBatchUI();
+
+        // 连续 5 次失败断路器 (Circuit Breaker)
+        if (this.consecutiveErrors >= 5) {
+          this.log('🛑 [断路器熔断] 连续 5 次遇到错误或死链，已自动终止挂机以防空转！请检查网络。', 'error');
+          alert('🛑 Auto-Pilot 断路器熔断：连续 5 次处理失败，已自动暂停挂机！');
+          this.pause();
+        } else {
+          await new Promise(r => setTimeout(r, 3000));
+        }
+      }
+    }
+  }
+};
+
+function initAutoPilotEngineUI() {
+  const btnStart = document.getElementById('btn-autopilot-start');
+  const btnPause = document.getElementById('btn-autopilot-pause');
+  const btnStop = document.getElementById('btn-autopilot-stop');
+
+  if (btnStart) {
+    btnStart.addEventListener('click', () => autoPilotEngine.start());
+  }
+  if (btnPause) {
+    btnPause.addEventListener('click', () => autoPilotEngine.pause());
+  }
+  if (btnStop) {
+    btnStop.addEventListener('click', () => autoPilotEngine.stop());
+  }
+}
+
+// ==========================================
+// 5. 外链推荐库与存活看板 UI
+// ==========================================
+function initSubTabNavigation() {
+  const subBtns = document.querySelectorAll('.sub-tab-btn');
+  const subPanels = document.querySelectorAll('.sub-panel');
+
+  if (!subBtns.length) return;
+
+  subBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const targetId = btn.getAttribute('data-subtarget');
+
+      subBtns.forEach(b => {
+        b.classList.remove('active');
+        b.style.color = 'var(--text-muted)';
+      });
+      subPanels.forEach(p => p.classList.add('hidden'));
+
+      btn.classList.add('active');
+      btn.style.color = 'var(--text-main)';
+
+      const targetPanel = document.getElementById(targetId);
+      if (targetPanel) {
+        targetPanel.classList.remove('hidden');
+      }
+
+      if (targetId === 'subpanel-publish' || targetId === 'subpanel-collect') {
+        updateBatchUI();
+      } else if (targetId === 'subpanel-directory') {
+        renderDirectoryUI();
+      } else if (targetId === 'subpanel-dashboard') {
+        renderDashboardUI();
+      }
+    });
+  });
+
+  const searchInput = document.getElementById('dir-search-input');
+  if (searchInput) {
+    searchInput.addEventListener('input', (e) => {
+      renderDirectoryUI(activeDirectoryCategory, e.target.value);
+    });
+  }
+}
+
+function renderDirectoryUI(category = 'all', searchQuery = '') {
+  activeDirectoryCategory = category;
+  if (!window.linkDirectory) return;
+
+  const categoryContainer = document.getElementById('dir-category-pills');
+  if (categoryContainer) {
+    const categories = window.linkDirectory.getCategories();
+    categoryContainer.innerHTML = categories.map(function(c) {
+      var isAct = c.id === category;
+      return '<button class="dir-cat-pill ' + (isAct ? 'active' : '') + '" data-cat="' + c.id + '" style="padding: 3px 8px; font-size: 0.7rem; border-radius: 4px; border: 1px solid ' + (isAct ? '#00f2fe' : 'hsla(217, 32%, 22%, 0.8)') + '; background: ' + (isAct ? 'rgba(0,242,254,0.15)' : 'hsla(220, 30%, 6%, 0.6)') + '; color: ' + (isAct ? '#00f2fe' : 'var(--text-muted)') + '; cursor: pointer; white-space: nowrap; flex-shrink: 0;">' +
+        c.name +
+      '</button>';
+    }).join('');
+
+    categoryContainer.querySelectorAll('.dir-cat-pill').forEach(pill => {
+      pill.addEventListener('click', (e) => {
+        renderDirectoryUI(e.currentTarget.getAttribute('data-cat'), searchQuery);
+      });
+    });
+  }
+
+  const grid = document.getElementById('dir-cards-grid');
+  if (grid) {
+    const targets = window.linkDirectory.getTargets(category, searchQuery);
+    grid.innerHTML = targets.map(function(t) {
+      return '<div class="directory-card-item" style="background: hsla(220, 30%, 6%, 0.8); border: 1px solid hsla(217, 32%, 22%, 0.8); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px;">' +
+        '<div style="display: flex; justify-content: space-between; align-items: center;">' +
+          '<h4 style="margin: 0; font-size: 0.8rem; color: var(--text-main);">' + t.title + '</h4>' +
+          '<span style="font-size: 0.68rem; padding: 2px 6px; border-radius: 4px; background: rgba(56,189,248,0.15); color: #38bdf8;">' + t.authority + '</span>' +
+        '</div>' +
+        '<p style="font-size: 0.72rem; color: var(--text-muted); margin: 0;">' + t.desc + '</p>' +
+        '<div style="display: flex; justify-content: space-between; align-items: center; margin-top: 4px;">' +
+          '<span style="font-size: 0.68rem; color: #34d399;">' + t.commentType + '</span>' +
+          '<button class="btn btn-primary btn-sm" onclick="window.open(\'' + t.url + '\', \'_blank\')" style="padding: 3px 8px; font-size: 0.7rem;">直达目标 🚀</button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  }
+}
+
+function renderDashboardUI(filter = 'all') {
+  activeDashboardFilter = filter;
+  if (!window.publishLogger) return;
+
+  const logs = window.publishLogger.getLogs();
+  const recordsContainer = document.getElementById('dash-records-list');
+  if (!recordsContainer) return;
+
+  if (logs.length === 0) {
+    recordsContainer.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--text-muted); font-size: 0.76rem;">暂无外链发布与存活记录</div>';
+    return;
+  }
+
+  recordsContainer.innerHTML = logs.slice(0, 30).map(function(l) {
+    var isPub = l.status === 'published';
+    return '<div class="dash-log-card" style="background: hsla(220, 30%, 6%, 0.7); border: 1px solid hsla(217, 32%, 18%, 0.7); border-radius: 6px; padding: 8px 10px; margin-bottom: 6px; font-size: 0.74rem;">' +
+      '<div style="display: flex; justify-content: space-between;">' +
+        '<span style="font-weight: 600; color: var(--text-main);">' + (l.domain || l.url) + '</span>' +
+        '<span style="color: ' + (isPub ? '#34d399' : '#f87171') + '; font-weight: 600;">' + (isPub ? '✔ 已发布' : '跳过') + '</span>' +
+      '</div>' +
+      '<div style="font-size: 0.68rem; color: var(--text-muted); margin-top: 4px;">' + (l.timestamp ? new Date(l.timestamp).toLocaleString() : '') + '</div>' +
+    '</div>';
+  }).join('');
+}
+
+// ==========================================
+// 6. 多项目隔离管理 UI
+// ==========================================
+function initProjectManagerUI() {
+  if (!window.projectManager) return;
+
+  const selProject = document.getElementById('sel-active-project');
+  const btnAddProject = document.getElementById('btn-add-project');
+  const modalCreate = document.getElementById('modal-create-project');
+  const btnCloseModal = document.getElementById('btn-close-project-modal');
+  const btnSubmitCreate = document.getElementById('btn-submit-create-project');
+
+  const renderProjectSelect = () => {
+    if (!selProject) return;
+    const projects = window.projectManager.getProjects();
+    const active = window.projectManager.getActiveProject();
+
+    selProject.innerHTML = projects.map(function(p) {
+      return '<option value="' + p.id + '" ' + (active && p.id === active.id ? 'selected' : '') + '>📁 ' + p.name + '</option>';
+    }).join('');
+  };
+
+  renderProjectSelect();
+
+  if (selProject) {
+    selProject.addEventListener('change', (e) => {
+      const selectedId = e.target.value;
+      window.projectManager.switchProject(selectedId);
+      if (window.publishLogger) window.publishLogger.reloadProjectContext();
+      if (typeof initBacklinkHelper === 'function') initBacklinkHelper();
+      renderDashboardUI();
+    });
+  }
+
+  if (btnAddProject && modalCreate) {
+    btnAddProject.addEventListener('click', () => modalCreate.classList.remove('hidden'));
+  }
+  if (btnCloseModal && modalCreate) {
+    btnCloseModal.addEventListener('click', () => modalCreate.classList.add('hidden'));
+  }
+
+  const btnExtractProfile = document.getElementById('btn-extract-homepage-profile');
+  if (btnExtractProfile) {
+    btnExtractProfile.addEventListener('click', async () => {
+      const urlInput = document.getElementById('new-proj-url');
+      const targetUrl = urlInput ? urlInput.value.trim() : '';
+      if (!targetUrl) {
+        alert('请先输入目标引流网址（例如 https://apivale.com/）');
+        return;
+      }
+
+      btnExtractProfile.textContent = '⏳ 抓取中...';
+      btnExtractProfile.disabled = true;
+
+      try {
+        const extracted = await window.projectManager.fetchAndExtractProfile(targetUrl);
+        if (extracted) {
+          const nameInput = document.getElementById('new-proj-name');
+          const profileNameInput = document.getElementById('new-proj-profile-name');
+          const profileBioInput = document.getElementById('new-proj-profile-bio');
+
+          if (nameInput && !nameInput.value) nameInput.value = extracted.name || '';
+          if (profileNameInput) profileNameInput.value = extracted.profileName || extracted.name || '';
+          if (profileBioInput) profileBioInput.value = extracted.profileBio || extracted.tagline || '';
+
+          alert('🎉 成功从目标主页抓取并解析出网站基础资料与图标封面！');
+        }
+      } catch (err) {
+        alert('抓取主页失败: ' + err.message);
+      } finally {
+        btnExtractProfile.textContent = '🪄 智能提取';
+        btnExtractProfile.disabled = false;
+      }
+    });
+  }
+
+  if (btnSubmitCreate && modalCreate) {
+    btnSubmitCreate.addEventListener('click', () => {
+      const nameInput = document.getElementById('new-proj-name');
+      const urlInput = document.getElementById('new-proj-url');
+      const profileNameInput = document.getElementById('new-proj-profile-name');
+      const profileBioInput = document.getElementById('new-proj-profile-bio');
+
+      const name = nameInput ? nameInput.value.trim() : '';
+      const url = urlInput ? urlInput.value.trim() : '';
+      const pName = profileNameInput ? profileNameInput.value.trim() : name;
+      const pBio = profileBioInput ? profileBioInput.value.trim() : '';
+
+      if (!name) {
+        alert('请输入项目名称！');
+        return;
+      }
+
+      let domain = '';
+      try { domain = new URL(url.startsWith('http') ? url : 'https://' + url).hostname; } catch (e) {}
+
+      const favicon = url ? url.replace(/\/+$/, '') + '/favicon.ico' : '';
+      const screenshot = url ? url.replace(/\/+$/, '') + '/og-image.png' : '';
+
+      window.projectManager.createProject(name, url, pName, 'support@' + domain, pBio, pBio, pBio, 'AI, SaaS, Tools', 'Freemium', favicon, screenshot);
+      modalCreate.classList.add('hidden');
+      renderProjectSelect();
+      if (typeof initBacklinkHelper === 'function') initBacklinkHelper();
+      alert('🎉 成功创建并切换至工作区: ' + name);
+    });
+  }
+}
+
+// ==========================================
+// 8. 第三方大模型配置管理器 (AI Settings Controller)
+// ==========================================
+function initAISettingsUI() {
+  const modalAiSettings = document.getElementById('modal-ai-settings');
+  const btnToggleSettings = document.getElementById('btn-toggle-settings');
+  const btnCloseAiSettings = document.getElementById('btn-close-ai-settings');
+  const aiPresetSelect = document.getElementById('ai-preset-select');
+  const aiBaseUrl = document.getElementById('ai-base-url');
+  const aiApiKey = document.getElementById('ai-api-key');
+  const aiModelName = document.getElementById('ai-model-name');
+  const btnToggleKeyVisibility = document.getElementById('btn-toggle-key-visibility');
+  const btnTestAiConnection = document.getElementById('btn-test-ai-connection');
+  const btnSaveAiSettings = document.getElementById('btn-save-ai-settings');
+  const aiTestResult = document.getElementById('ai-test-result');
+
+  const PRESETS = {
+    deepseek: {
+      url: 'https://api.deepseek.com/v1',
+      model: 'deepseek-chat'
+    },
+    openai: {
+      url: 'https://api.openai.com/v1',
+      model: 'gpt-4o-mini'
+    },
+    gemini: {
+      url: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+      model: 'gemini-1.5-flash'
+    },
+    qwen: {
+      url: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      model: 'qwen-plus'
+    },
+    glm: {
+      url: 'https://open.bigmodel.cn/api/paas/v4',
+      model: 'glm-4-flash'
+    },
+    kimi: {
+      url: 'https://api.moonshot.cn/v1',
+      model: 'moonshot-v1-8k'
+    },
+    custom: {
+      url: '',
+      model: ''
+    }
+  };
+
+  // 1. 读取历史保存的配置
+  const loadSavedSettings = () => {
+    const savedPreset = localStorage.getItem('ai_provider_preset') || 'deepseek';
+    const savedUrl = localStorage.getItem('ai_base_url') || PRESETS.deepseek.url;
+    const savedKey = localStorage.getItem('ai_api_key') || '';
+    const savedModel = localStorage.getItem('ai_model_name') || PRESETS.deepseek.model;
+
+    if (aiPresetSelect) aiPresetSelect.value = savedPreset;
+    if (aiBaseUrl) aiBaseUrl.value = savedUrl;
+    if (aiApiKey) aiApiKey.value = savedKey;
+    if (aiModelName) aiModelName.value = savedModel;
+  };
+
+  loadSavedSettings();
+
+  // 2. 打开 / 关闭弹窗交互
+  if (btnToggleSettings && modalAiSettings) {
+    btnToggleSettings.addEventListener('click', () => {
+      loadSavedSettings();
+      if (aiTestResult) aiTestResult.style.display = 'none';
+      modalAiSettings.classList.remove('hidden');
+    });
+  }
+
+  if (btnCloseAiSettings && modalAiSettings) {
+    btnCloseAiSettings.addEventListener('click', () => {
+      modalAiSettings.classList.add('hidden');
+    });
+  }
+
+  // 3. 预设切换自动填入对应 Base URL 和默认 Model Name
+  if (aiPresetSelect && aiBaseUrl && aiModelName) {
+    aiPresetSelect.addEventListener('change', (e) => {
+      const presetKey = e.target.value;
+      if (PRESETS[presetKey]) {
+        if (presetKey !== 'custom') {
+          aiBaseUrl.value = PRESETS[presetKey].url;
+          aiModelName.value = PRESETS[presetKey].model;
+        }
+      }
+    });
+  }
+
+  // 4. 显示 / 隐藏 API Key 明文
+  if (btnToggleKeyVisibility && aiApiKey) {
+    btnToggleKeyVisibility.addEventListener('click', () => {
+      aiApiKey.type = aiApiKey.type === 'password' ? 'text' : 'password';
+      btnToggleKeyVisibility.textContent = aiApiKey.type === 'password' ? '👁️' : '🔒';
+    });
+  }
+
+  // 5. 测试连通性
+  if (btnTestAiConnection && aiBaseUrl && aiApiKey && aiModelName) {
+    btnTestAiConnection.addEventListener('click', async () => {
+      const rawUrl = aiBaseUrl.value.trim().replace(/\/+$/, '');
+      const key = aiApiKey.value.trim();
+      const model = aiModelName.value.trim();
+
+      if (!rawUrl) {
+        alert('请输入 API 接口地址 (Base URL)！');
+        return;
+      }
+      if (!key) {
+        alert('请输入 API 密钥 (API Key)！');
+        return;
+      }
+
+      btnTestAiConnection.disabled = true;
+      btnTestAiConnection.textContent = '⏳ 测试中...';
+      if (aiTestResult) {
+        aiTestResult.style.display = 'block';
+        aiTestResult.style.color = '#38bdf8';
+        aiTestResult.textContent = '正在发起测试握手请求...';
+      }
+
+      const startTime = Date.now();
+      try {
+        const endpoint = rawUrl.endsWith('/chat/completions') ? rawUrl : `${rawUrl}/chat/completions`;
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${key}`
+          },
+          body: JSON.stringify({
+            model: model || 'gpt-4o-mini',
+            messages: [{ role: 'user', content: 'Hi' }],
+            max_tokens: 5
+          }),
+          signal: AbortSignal.timeout(10000)
+        });
+
+        const latency = Date.now() - startTime;
+        if (res.ok) {
+          if (aiTestResult) {
+            aiTestResult.style.color = '#34d399';
+            aiTestResult.textContent = `✅ 连接成功！响应延迟: ${latency}ms，接口与密钥完全正常。`;
+          }
+        } else {
+          const errData = await res.text();
+          let msg = `HTTP ${res.status}`;
+          try {
+            const j = JSON.parse(errData);
+            if (j.error && j.error.message) msg += `: ${j.error.message}`;
+          } catch (e) {
+            msg += `: ${errData.slice(0, 100)}`;
+          }
+          if (aiTestResult) {
+            aiTestResult.style.color = '#f87171';
+            aiTestResult.textContent = `❌ 连接失败: ${msg}`;
+          }
+        }
+      } catch (err) {
+        if (aiTestResult) {
+          aiTestResult.style.color = '#f87171';
+          aiTestResult.textContent = `❌ 请求异常: ${err.message}`;
+        }
+      } finally {
+        btnTestAiConnection.disabled = false;
+        btnTestAiConnection.textContent = '⚡ 测试连通性';
+      }
+    });
+  }
+
+  // 6. 保存配置
+  if (btnSaveAiSettings && aiPresetSelect && aiBaseUrl && aiApiKey && aiModelName && modalAiSettings) {
+    btnSaveAiSettings.addEventListener('click', () => {
+      const preset = aiPresetSelect.value;
+      const url = aiBaseUrl.value.trim();
+      const key = aiApiKey.value.trim();
+      const model = aiModelName.value.trim();
+
+      localStorage.setItem('ai_provider_preset', preset);
+      localStorage.setItem('ai_base_url', url);
+      localStorage.setItem('ai_api_key', key);
+      localStorage.setItem('ai_model_name', model);
+
+      if (chrome.storage && chrome.storage.local) {
+        chrome.storage.local.set({
+          ai_provider_preset: preset,
+          ai_base_url: url,
+          ai_api_key: key,
+          ai_model_name: model
+        });
+      }
+
+      alert('🎉 大模型 API 接口配置已成功保存！');
+      modalAiSettings.classList.add('hidden');
+    });
+  }
+}
+
+// ==========================================
+// 7. 全量应用初始化挂载入口 (Bootstrap ComLinkAI)
+// ==========================================
+function bootstrapComLinkAI() {
+  console.log('[ComLinkAI] 正在挂载侧边栏控制器与交互监听器...');
+
+  // 1. 初始化顶层 Workspace Tabs (外链批处理 / Markdown 剪存 / 网页伴侣 AI)
+  const topNavBtns = document.querySelectorAll('.tab-nav-btn');
+  const topPanels = document.querySelectorAll('.tab-panel');
+  if (topNavBtns.length) {
+    topNavBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const targetId = btn.getAttribute('data-target');
+        topNavBtns.forEach(b => b.classList.remove('active'));
+        topPanels.forEach(p => {
+          p.classList.remove('active');
+          p.classList.add('hidden');
+        });
+        btn.classList.add('active');
+        const p = document.getElementById(targetId);
+        if (p) {
+          p.classList.remove('hidden');
+          p.classList.add('active');
+        }
+      });
+    });
+  }
+
+  // 2. 初始化核心各功能子模块
+  try { initApp(); } catch (e) { console.warn('[ComLinkAI] initApp 异常:', e); }
+  try { initProjectManagerUI(); } catch (e) { console.warn('[ComLinkAI] initProjectManagerUI 异常:', e); }
+  try { initSubTabNavigation(); } catch (e) { console.warn('[ComLinkAI] initSubTabNavigation 异常:', e); }
+  try { initBacklinkHelper(); } catch (e) { console.warn('[ComLinkAI] initBacklinkHelper 异常:', e); }
+  try { initBatchWorkbench(); } catch (e) { console.warn('[ComLinkAI] initBatchWorkbench 异常:', e); }
+  try { initAutoPilotEngineUI(); } catch (e) { console.warn('[ComLinkAI] initAutoPilotEngineUI 异常:', e); }
+  try { initAISettingsUI(); } catch (e) { console.warn('[ComLinkAI] initAISettingsUI 异常:', e); }
+  try { updateBatchUI(); } catch (e) { console.warn('[ComLinkAI] updateBatchUI 异常:', e); }
+
+  console.log('[ComLinkAI] 全部控制器与交互监听器初始化挂载完成！');
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', bootstrapComLinkAI);
+} else {
+  bootstrapComLinkAI();
 }

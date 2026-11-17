@@ -9,14 +9,63 @@ const os = require('os');
 const PORT = 3010;
 
 // 全局状态
+let isWorkerMode = false;
 let activeExtensionWs = null;
 const pendingRequests = new Map();
+let httpActionQueue = [];
+let lastHttpPollTime = 0;
+
+// 辅助函数：向 Master 进程发送 HTTP 请求
+function requestMaster(pathName, method = 'GET', postData = null) {
+  return new Promise((resolve, reject) => {
+    const options = {
+      hostname: '127.0.0.1',
+      port: PORT,
+      path: pathName,
+      method: method,
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    };
+
+    const req = http.request(options, (res) => {
+      let body = '';
+      res.on('data', (chunk) => body += chunk.toString());
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          try {
+            resolve(JSON.parse(body));
+          } catch (e) {
+            reject(new Error('解析 Master 响应失败: ' + e.message));
+          }
+        } else {
+          try {
+            const errJson = JSON.parse(body);
+            reject(new Error(errJson.error || `HTTP ${res.statusCode}`));
+          } catch (e) {
+            reject(new Error(`HTTP ${res.statusCode}`));
+          }
+        }
+      });
+    });
+
+    req.on('error', (err) => {
+      reject(new Error('连接 Master 失败: ' + err.message));
+    });
+
+    if (postData) {
+      req.write(JSON.stringify(postData));
+    }
+    req.end();
+  });
+}
 
 // 日志记录函数 - 所有非协议输出必须写入 stderr，以防破坏 MCP 的 stdout 协议流
 function log(msg, ...args) {
   const timestamp = new Date().toISOString();
-  console.error(`[${timestamp}] [CodexLink] ${msg}`, ...args);
+  console.error(`[${timestamp}] [ComLinkAI] ${msg}`, ...args);
 }
+
 
 // 动态读取并解析 Codex 配置文件 (.codex/config.toml) 与密钥 (.codex/auth.json)
 function getCodexConfig() {
@@ -85,6 +134,7 @@ function getCodexConfig() {
     return { ...defaultConf, apiKey };
   }
 }
+
 // 动态检测 Obsidian 知识库路径，优先读取 Obsidian 系统全局 Session 以自适应匹配当前正处于打开状态或最新活跃的库，其次通过 config.toml 动态识别，兜底为 E:\obsidianfiles
 function getObsidianPath() {
   const defaultPath = 'E:\\obsidianfiles';
@@ -161,7 +211,6 @@ function getObsidianPath() {
   return defaultPath;
 }
 
-
 // ==========================================
 // 1. HTTP 状态服务与 REST API 接口
 // ==========================================
@@ -177,6 +226,13 @@ const httpServer = http.createServer(async (req, res) => {
     return;
   }
 
+  // 1.3 获取 Codex 配置的 REST API
+  if (req.url === '/api/codex-config' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify(getCodexConfig()));
+    return;
+  }
+
   // 1.4 一键剪存网页至 Obsidian 的 REST API 接口
   if (req.url === '/api/save-to-obsidian' && req.method === 'POST') {
     let body = '';
@@ -185,7 +241,7 @@ const httpServer = http.createServer(async (req, res) => {
     });
     req.on('end', () => {
       try {
-        const { title, url, content, summary } = JSON.parse(body);
+        const { title, url, content, summary, images } = JSON.parse(body);
         if (!title || !content) {
           res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
           res.end(JSON.stringify({ error: '缺少标题 (title) 或正文内容 (content)' }));
@@ -201,6 +257,32 @@ const httpServer = http.createServer(async (req, res) => {
         const safeTitle = title.replace(/[\\\/:\*\?"<>\|]/g, '_').trim();
         const filename = `${safeTitle}.md`;
         const filePath = path.join(saveDir, filename);
+
+        // 处理图片保存与链接重链接逻辑
+        let updatedContent = content;
+        if (images && images.length > 0) {
+          const attachmentsDir = path.join(saveDir, 'attachments', `${safeTitle}_assets`);
+          if (!fs.existsSync(attachmentsDir)) {
+            fs.mkdirSync(attachmentsDir, { recursive: true });
+          }
+
+          images.forEach(img => {
+            try {
+              const imgPath = path.join(attachmentsDir, img.filename);
+              const buffer = Buffer.from(img.base64Data, 'base64');
+              fs.writeFileSync(imgPath, buffer);
+              log(`成功下载并保存本地图片: ${imgPath}`);
+
+              // 相对路径转换
+              const relativePath = `attachments/${safeTitle}_assets/${img.filename}`;
+              const escapedUrl = img.originalUrl.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+              const urlRegex = new RegExp(`\\(${escapedUrl}\\)`, 'g');
+              updatedContent = updatedContent.replace(urlRegex, `(${relativePath})`);
+            } catch (e) {
+              log(`写入图片 ${img.filename} 失败:`, e.message);
+            }
+          });
+        }
 
         const currentDate = new Date().toLocaleString('zh-CN', { hour12: false });
         let fileContent = `---
@@ -218,7 +300,7 @@ tags:
           fileContent += `## 💡 AI 核心摘要\n\n${summary.trim()}\n\n---\n\n`;
         }
 
-        fileContent += `## 📄 网页排版正文\n\n${content.trim()}\n`;
+        fileContent += `## 📄 网页排版正文\n\n${updatedContent.trim()}\n`;
 
         fs.writeFileSync(filePath, fileContent, 'utf8');
         log(`网页剪存成功！已写入本地 Obsidian 文件: ${filePath}`);
@@ -239,70 +321,76 @@ tags:
     return;
   }
 
-  // 1.1 获取活跃标签页内容的 REST API
-  if (req.url === '/api/active-tab' && req.method === 'GET') {
-    if (!activeExtensionWs || activeExtensionWs.readyState !== 1 /* OPEN */) {
-      res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ error: '浏览器插件未连接。请先打开 Chrome 并启用 CodexLink 插件。' }));
-      return;
-    }
+  // 1.5 转发操作到浏览器插件的 REST API
+  if (req.url === '/api/action' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => {
+      body += chunk.toString();
+    });
+    req.on('end', async () => {
+      let actionName = 'unknown';
+      try {
+        const { action, data } = JSON.parse(body);
+        actionName = action || 'unknown';
+        if (!action) {
+          res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ error: '缺少操作名称 (action)' }));
+          return;
+        }
 
-    try {
-      log('收到 REST API 请求，正在抓取活跃标签页内容...');
-      const pageData = await getActiveTabContentFromExtension();
-      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ success: true, ...pageData }));
-    } catch (err) {
-      log('REST API 抓取失败:', err.message);
-      res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
-      res.end(JSON.stringify({ error: err.message }));
-    }
+        log(`[Master] 收到 REST API 转发操作 [${action}] 请求...`);
+        const result = await callExtensionAction(action, data);
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ success: true, data: result }));
+      } catch (err) {
+        log(`[Master] 转发操作 [${actionName}] 失败:`, err.message);
+        res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
     return;
   }
 
-  // 1.2 服务运行状态页面
-  if (req.url === '/' && req.method === 'GET') {
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    const connectionStatus = activeExtensionWs && activeExtensionWs.readyState === 1
-      ? '<span style="color: #4ade80;">● 已连接</span>'
-      : '<span style="color: #f87171;">○ 未连接</span>';
-    
-    res.end(`
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>CodexLink Local Bridge</title>
-        <style>
-          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #e2e8f0; padding: 2rem; max-width: 600px; margin: 0 auto; line-height: 1.6; }
-          .card { background: #1e293b; padding: 1.5rem; border-radius: 12px; border: 1px solid #334155; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); }
-          h1 { color: #f8fafc; font-size: 1.5rem; margin-top: 0; }
-          .status { font-weight: bold; font-size: 1.1rem; margin: 1rem 0; }
-          code { background: #0f172a; padding: 0.2rem 0.4rem; border-radius: 4px; font-family: monospace; color: #38bdf8; }
-          .footer { font-size: 0.8rem; color: #64748b; margin-top: 2rem; text-align: center; }
-        </style>
-      </head>
-      <body>
-        <div class="card">
-          <h1>🔗 CodexLink Local Bridge</h1>
-          <p>本地中转服务正正常运行在端口 <code>${PORT}</code>。</p>
-          <div class="status">浏览器插件状态: ${connectionStatus}</div>
-          <p>您可以通过以下方式联动 AI 助手：</p>
-          <ul>
-            <li><strong>MCP 协议</strong>：配置您的 AI 客户端运行此本地服务作为标准 MCP 工具。</li>
-            <li><strong>REST API</strong>：向 <code>http://localhost:${PORT}/api/active-tab</code> 发送 GET 请求直接获取页面内容。</li>
-          </ul>
-        </div>
-        <div class="footer">CodexLink Server v1.0.0</div>
-      </body>
-      </html>
-    `);
-    return;
-  }
-
-  // 1.3 获取 Codex 配置的 REST API
-  if (req.url === '/api/codex-config' && req.method === 'GET') {
+  // 1.6 HTTP 轮询接口 (当 WebSocket 在指纹浏览器/代理环境中被阻断时的备用双通道)
+  if (req.url === '/api/poll' && req.method === 'GET') {
+    const now = Date.now();
+    if (!lastHttpPollTime || (now - lastHttpPollTime > 10000)) {
+      log('🚀 浏览器扩展已通过 HTTP 双通道成功建立连接！');
+    }
+    lastHttpPollTime = now;
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify(getCodexConfig()));
+    if (httpActionQueue.length > 0) {
+      const nextTask = httpActionQueue.shift();
+      res.end(JSON.stringify(nextTask));
+    } else {
+      res.end(JSON.stringify({ action: 'noop' }));
+    }
+    return;
+  }
+
+  if (req.url === '/api/poll-response' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk.toString(); });
+    req.on('end', () => {
+      try {
+        const { id, data, error } = JSON.parse(body);
+        if (id && pendingRequests.has(id)) {
+          const { resolve, reject, timeout } = pendingRequests.get(id);
+          clearTimeout(timeout);
+          pendingRequests.delete(id);
+          if (error) {
+            reject(new Error(error));
+          } else {
+            resolve(data);
+          }
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ success: true }));
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
     return;
   }
 
@@ -323,6 +411,11 @@ wss.on('connection', (ws, request) => {
   ws.on('message', (message) => {
     try {
       const payload = JSON.parse(message.toString());
+      if (payload && payload.type === 'ping') {
+        ws.send(JSON.stringify({ type: 'pong' }));
+        return;
+      }
+
       const { id, type, data, error } = payload;
 
       // 匹配之前发送的异步请求
@@ -336,7 +429,7 @@ wss.on('connection', (ws, request) => {
         } else {
           resolve(data);
         }
-      } else {
+      } else if (payload.type !== 'pong') {
         log('收到未匹配或主动推送的消息:', payload);
       }
     } catch (err) {
@@ -344,57 +437,67 @@ wss.on('connection', (ws, request) => {
     }
   });
 
-  ws.on('close', () => {
+  ws.onclose = () => {
     log('浏览器扩展 WebSocket 连接已断开。');
     if (activeExtensionWs === ws) {
       activeExtensionWs = null;
     }
-  });
+  };
 
-  ws.on('error', (err) => {
+  ws.onerror = (err) => {
     log('WebSocket 发生错误:', err.message);
-  });
-});
-
-// 将 HTTP 的升级请求转发给 WebSocketServer
-httpServer.on('upgrade', (request, socket, head) => {
-  wss.handleUpgrade(request, socket, head, (ws) => {
-    wss.emit('connection', ws, request);
-  });
-});
-
-// 启动端口监听
-httpServer.listen(PORT, () => {
-  log(`HTTP 和 WebSocket 服务正在端口 ${PORT} 监听中...`);
+  };
 });
 
 // ==========================================
-// 3. 通信桥梁：向浏览器插件请求数据
+// 3. 通信桥梁：向浏览器插件发起请求
 // ==========================================
-function getActiveTabContentFromExtension() {
+function callExtensionAction(action, data = {}) {
   return new Promise((resolve, reject) => {
-    if (!activeExtensionWs || activeExtensionWs.readyState !== 1) {
-      return reject(new Error('浏览器插件未连接，请先在 Chrome 中激活 CodexLink 插件！'));
+    if (isWorkerMode) {
+      log(`[Worker] 正在转发操作 [${action}] 给 Master...`);
+      requestMaster('/api/action', 'POST', { action, data })
+        .then(res => {
+          if (res.success) {
+            resolve(res.data);
+          } else {
+            reject(new Error(res.error || '执行操作失败'));
+          }
+        })
+        .catch(err => reject(err));
+      return;
+    }
+
+    const hasWs = activeExtensionWs && activeExtensionWs.readyState === 1;
+    const hasHttpPoll = (Date.now() - lastHttpPollTime) < 10000;
+
+    if (!hasWs && !hasHttpPoll) {
+      return reject(new Error('浏览器插件未连接，请先在 Chrome 中激活 CodexLink 插件并打开侧边栏！'));
     }
 
     const requestId = Math.random().toString(36).substring(2, 11);
     
-    // 设置 10 秒超时
+    // 设置 15 秒超时
     const timeout = setTimeout(() => {
       if (pendingRequests.has(requestId)) {
         pendingRequests.delete(requestId);
-        reject(new Error('向浏览器插件请求页面内容超时（10秒内未响应）。'));
+        reject(new Error(`向浏览器插件请求 [${action}] 超时（15秒内未响应）。`));
       }
-    }, 10000);
+    }, 15000);
 
     pendingRequests.set(requestId, { resolve, reject, timeout });
 
     const requestPayload = {
       id: requestId,
-      action: 'getActiveTab'
+      action: action,
+      data: data
     };
 
-    activeExtensionWs.send(JSON.stringify(requestPayload));
+    if (hasWs) {
+      activeExtensionWs.send(JSON.stringify(requestPayload));
+    } else {
+      httpActionQueue.push(requestPayload);
+    }
   });
 }
 
@@ -425,7 +528,8 @@ function handleMcpRequest(req) {
     sendMcpResponse(id, {
       protocolVersion: '2024-11-05',
       capabilities: {
-        tools: {}
+        tools: {},
+        resources: {}
       },
       serverInfo: {
         name: 'codex-link-server',
@@ -446,11 +550,98 @@ function handleMcpRequest(req) {
     sendMcpResponse(id, {
       tools: [
         {
+          name: 'browser_navigate',
+          description: '将当前活跃标签页导航到指定的 URL。',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              url: { type: 'string', description: '目标 URL，如 "https://www.baidu.com"' }
+            },
+            required: ['url']
+          }
+        },
+        {
           name: 'get_active_tab_content',
           description: '读取用户当前在浏览器中处于活跃状态的标签页内容。可以无视登录状态和严格反爬，返回标题、URL 和排版工整的 Markdown 格式网页正文。',
           inputSchema: {
             type: 'object',
             properties: {}
+          }
+        },
+        {
+          name: 'browser_get_elements',
+          description: '获取当前页面中所有可见的交互元素（按钮、输入框、链接等），返回标签类型、文本、选择器等，以便进行后续操控。',
+          inputSchema: {
+            type: 'object',
+            properties: {}
+          }
+        },
+        {
+          name: 'browser_click',
+          description: '在当前页面模拟真实鼠标点击指定选择器对应的元素。',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              selector: { type: 'string', description: '目标元素的 CSS 选择器，如 "#submit-btn" 或 "button.login"' }
+            },
+            required: ['selector']
+          }
+        },
+        {
+          name: 'browser_type',
+          description: '在当前页面的指定输入框中输入文本，并触发 input/change 事件以保证状态同步。',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              selector: { type: 'string', description: '目标输入框的 CSS 选择器，如 "input[type=\'text\']" 或 "#search"' },
+              text: { type: 'string', description: '要输入的文本内容' }
+            },
+            required: ['selector', 'text']
+          }
+        },
+        {
+          name: 'browser_scroll',
+          description: '模拟页面滚动，支持 up/down/left/right 滚动指定像素。',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              direction: { type: 'string', enum: ['up', 'down', 'left', 'right'], description: '滚动方向' },
+              amount: { type: 'number', description: '滚动像素值，默认 400' }
+            },
+            required: ['direction']
+          }
+        },
+        {
+          name: 'browser_screenshot',
+          description: '截取当前活跃标签页可见区域截图，返回 base64 PNG，供 AI 获取操作后的页面视觉反馈。',
+          inputSchema: {
+            type: 'object',
+            properties: {}
+          }
+        },
+        {
+          name: 'browser_keypress',
+          description: '在当前页面模拟键盘按键，支持 Enter、Tab、Escape、Space、Backspace、Delete、方向键，以及 Control+a、Shift+Tab 等组合键。',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              key: { type: 'string', description: '键名，如 "Enter"、"Tab"、"Escape"、"ArrowDown"、"Control+a"' },
+              selector: { type: 'string', description: '可选 CSS 选择器，省略时作用于当前焦点元素' }
+            },
+            required: ['key']
+          }
+        },
+        {
+          name: 'browser_wait',
+          description: '等待页面加载完成 (mode="load") 或等待指定 CSS 元素出现 (mode="element")。每次 browser_navigate 后务必调用。',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              mode: { type: 'string', enum: ['load', 'element'], description: '"load" 等待页面加载完成；"element" 等待元素出现' },
+              selector: { type: 'string', description: 'mode=element 时必填' },
+              timeout: { type: 'number', description: '最大等待毫秒数，默认 10000' }
+            },
+            required: ['mode']
           }
         }
       ]
@@ -461,10 +652,134 @@ function handleMcpRequest(req) {
   // 4.4 tools/call - 调用指定工具
   if (method === 'tools/call') {
     const toolName = params?.name;
-    if (toolName === 'get_active_tab_content') {
+    const args = params?.arguments || {};
+
+    if (toolName === 'browser_navigate') {
+      handleBrowserNavigateTool(id, args.url);
+    } else if (toolName === 'get_active_tab_content') {
       handleGetActiveTabTool(id);
+    } else if (toolName === 'browser_get_elements') {
+      handleBrowserGetElementsTool(id);
+    } else if (toolName === 'browser_click') {
+      handleBrowserClickTool(id, args.selector);
+    } else if (toolName === 'browser_type') {
+      handleBrowserTypeTool(id, args.selector, args.text);
+    } else if (toolName === 'browser_scroll') {
+      handleBrowserScrollTool(id, args.direction, args.amount);
+    } else if (toolName === 'browser_screenshot') {
+      handleBrowserScreenshotTool(id);
+    } else if (toolName === 'browser_keypress') {
+      handleBrowserKeypressTool(id, args.key, args.selector);
+    } else if (toolName === 'browser_wait') {
+      handleBrowserWaitTool(id, args.mode, args.selector, args.timeout);
     } else {
       sendMcpError(id, -32601, `Method not found: ${toolName}`);
+    }
+    return;
+  }
+
+  // 4.4.1 resources/list - 声明可用资源列表
+  if (method === 'resources/list') {
+    callExtensionAction('listTabs')
+      .then(tabs => {
+        const resources = [
+          {
+            uri: 'codex-link://tabs',
+            name: '浏览器打开的标签页列表',
+            description: '当前浏览器中所有打开的标签页（包括标题与 URL）',
+            mimeType: 'text/markdown'
+          }
+        ];
+        if (Array.isArray(tabs)) {
+          tabs.forEach(t => {
+            if (t.url && !t.url.startsWith('chrome://') && !t.url.startsWith('chrome-extension://') && !t.url.startsWith('edge://') && !t.url.startsWith('about:')) {
+              resources.push({
+                uri: `codex-link://tabs/${t.id}`,
+                name: t.title || '无标题网页',
+                description: `网页内容: ${t.url}`,
+                mimeType: 'text/markdown'
+              });
+            }
+          });
+        }
+        sendMcpResponse(id, { resources });
+      })
+      .catch(err => {
+        sendMcpResponse(id, {
+          resources: [
+            {
+              uri: 'codex-link://tabs',
+              name: '浏览器打开的标签页列表',
+              description: '当前浏览器中所有打开的标签页（包括标题与 URL）',
+              mimeType: 'text/markdown'
+            }
+          ]
+        });
+      });
+    return;
+  }
+
+  // 4.4.2 resources/read - 读取指定资源
+  if (method === 'resources/read') {
+    const uri = params?.uri;
+    if (uri === 'codex-link://tabs') {
+      callExtensionAction('listTabs')
+        .then(tabs => {
+          let text = '# 浏览器打开的标签页列表\n\n';
+          if (Array.isArray(tabs) && tabs.length > 0) {
+            text += '| 标签页 ID | 标题 | URL | 状态 |\n';
+            text += '| --- | --- | --- | --- |\n';
+            tabs.forEach(t => {
+              text += `| ${t.id} | ${t.title || '无标题'} | ${t.url || ''} | ${t.active ? '当前活动' : '后台'} |\n`;
+            });
+          } else {
+            text += '当前没有打开的标签页，或者插件未连接。';
+          }
+          sendMcpResponse(id, {
+            contents: [
+              {
+                uri,
+                mimeType: 'text/markdown',
+                text
+              }
+            ]
+          });
+        })
+        .catch(err => {
+          sendMcpError(id, -32603, `读取标签页列表失败: ${err.message}`);
+        });
+    } else if (uri && uri.startsWith('codex-link://tabs/')) {
+      const tabIdStr = uri.replace('codex-link://tabs/', '');
+      const tabId = parseInt(tabIdStr, 10);
+      if (isNaN(tabId)) {
+        sendMcpError(id, -32602, `无效的标签页 ID: ${tabIdStr}`);
+        return;
+      }
+      callExtensionAction('getTabContent', { tabId })
+        .then(pageData => {
+          const markdownContent = `
+# 标题: ${pageData.title}
+URL: ${pageData.url}
+字数估算: ${pageData.length || 0} 字
+
+---
+${pageData.content}
+`;
+          sendMcpResponse(id, {
+            contents: [
+              {
+                uri,
+                mimeType: 'text/markdown',
+                text: markdownContent.trim()
+              }
+            ]
+          });
+        })
+        .catch(err => {
+          sendMcpError(id, -32603, `读取标签页内容失败: ${err.message}`);
+        });
+    } else {
+      sendMcpError(id, -32602, `Unknown resource URI: ${uri}`);
     }
     return;
   }
@@ -481,11 +796,29 @@ function handleMcpRequest(req) {
   }
 }
 
-// 处理 get_active_tab_content 工具调用
+// Stdio MCP 工具调用处理器
+async function handleBrowserNavigateTool(requestId, url) {
+  try {
+    log(`收到 MCP 工具调用 browser_navigate, url: ${url}...`);
+    const res = await callExtensionAction('navigate', { url });
+    if (res && res.success === false) throw new Error(res.error || '导航失败');
+    sendMcpResponse(requestId, {
+      content: [{ type: 'text', text: `[成功]: 浏览器已成功导航至 ${url}` }],
+      isError: false
+    });
+  } catch (err) {
+    log('工具执行失败:', err.message);
+    sendMcpResponse(requestId, {
+      content: [{ type: 'text', text: `[错误]: 导航失败。原因：${err.message}` }],
+      isError: true
+    });
+  }
+}
+
 async function handleGetActiveTabTool(requestId) {
   try {
     log('收到 MCP 工具调用 get_active_tab_content...');
-    const pageData = await getActiveTabContentFromExtension();
+    const pageData = await callExtensionAction('getActiveTab');
     
     const markdownContent = `
 # 标题: ${pageData.title}
@@ -495,26 +828,164 @@ URL: ${pageData.url}
 ---
 ${pageData.content}
 `;
-
     sendMcpResponse(requestId, {
-      content: [
-        {
-          type: 'text',
-          text: markdownContent.trim()
-        }
-      ],
+      content: [{ type: 'text', text: markdownContent.trim() }],
       isError: false
     });
     log('成功返回网页 Markdown 内容给 AI 客户端！');
   } catch (err) {
     log('工具执行失败:', err.message);
     sendMcpResponse(requestId, {
+      content: [{ type: 'text', text: `[错误]: 读取浏览器网页失败。原因：${err.message}\n请确保已打开 Chrome 并激活了 CodexLink 侧边栏插件，且当前正停留在一个正常的网页上。` }],
+      isError: true
+    });
+  }
+}
+
+async function handleBrowserGetElementsTool(requestId) {
+  try {
+    log('收到 MCP 工具调用 browser_get_elements...');
+    const elements = await callExtensionAction('getElements');
+    const responseText = elements.length > 0 
+      ? JSON.stringify(elements, null, 2)
+      : '未在页面上找到可见的交互元素。';
+    sendMcpResponse(requestId, {
+      content: [{ type: 'text', text: responseText }],
+      isError: false
+    });
+  } catch (err) {
+    log('工具执行失败:', err.message);
+    sendMcpResponse(requestId, {
+      content: [{ type: 'text', text: `[错误]: 获取交互元素失败。原因：${err.message}` }],
+      isError: true
+    });
+  }
+}
+
+async function handleBrowserClickTool(requestId, selector) {
+  try {
+    log(`收到 MCP 工具调用 browser_click, selector: ${selector}...`);
+    const res = await callExtensionAction('click', { selector });
+    if (res && res.success === false) throw new Error(res.error || '点击失败');
+    sendMcpResponse(requestId, {
+      content: [{ type: 'text', text: `[成功]: 已成功模拟点击元素: ${selector}` }],
+      isError: false
+    });
+  } catch (err) {
+    log('工具执行失败:', err.message);
+    sendMcpResponse(requestId, {
+      content: [{ type: 'text', text: `[错误]: 点击失败。原因：${err.message}` }],
+      isError: true
+    });
+  }
+}
+
+async function handleBrowserTypeTool(requestId, selector, text) {
+  try {
+    log(`收到 MCP 工具调用 browser_type, selector: ${selector}, text: ${text}...`);
+    const res = await callExtensionAction('type', { selector, text });
+    if (res && res.success === false) throw new Error(res.error || '输入失败');
+    sendMcpResponse(requestId, {
+      content: [{ type: 'text', text: `[成功]: 已成功在元素 ${selector} 中输入文本` }],
+      isError: false
+    });
+  } catch (err) {
+    log('工具执行失败:', err.message);
+    sendMcpResponse(requestId, {
+      content: [{ type: 'text', text: `[错误]: 输入失败。原因：${err.message}` }],
+      isError: true
+    });
+  }
+}
+
+async function handleBrowserScrollTool(requestId, direction, amount = 400) {
+  try {
+    log(`收到 MCP 工具调用 browser_scroll, direction: ${direction}, amount: ${amount}...`);
+    const res = await callExtensionAction('scroll', { direction, amount: amount || 400 });
+    if (res && res.success === false) throw new Error(res.error || '滚动失败');
+    sendMcpResponse(requestId, {
+      content: [{ type: 'text', text: `[成功]: 滚动操作已完成。当前 scrollTop: ${res.scrollTop}, scrollLeft: ${res.scrollLeft}` }],
+      isError: false
+    });
+  } catch (err) {
+    log('工具执行失败:', err.message);
+    sendMcpResponse(requestId, {
+      content: [{ type: 'text', text: `[错误]: 滚动失败。原因：${err.message}` }],
+      isError: true
+    });
+  }
+}
+
+async function handleBrowserScreenshotTool(requestId) {
+  try {
+    log('收到 MCP 工具调用 browser_screenshot (CDP 原生硬件加速缩放)...');
+    const res = await callExtensionAction('screenshot');
+    if (!res || !res.dataUrl) throw new Error('截图数据为空');
+    
+    // 动态提取正确的 MIME 类型与纯 base64 数据
+    const match = res.dataUrl.match(/^data:(image\/[a-zA-Z]+);base64,(.+)$/);
+    const mimeType = match ? match[1] : 'image/jpeg';
+    const b64 = match ? match[2] : res.dataUrl.replace(/^data:[^;]+;base64,/, '');
+
+    sendMcpResponse(requestId, {
       content: [
-        {
-          type: 'text',
-          text: `[错误]: 读取浏览器网页失败。原因：${err.message}\n请确保已打开 Chrome 并激活了 CodexLink 侧边栏插件，且当前正停留在一个正常的网页上。`
-        }
+        { type: 'image', data: b64, mimeType: mimeType },
+        { type: 'text', text: `[截图成功]: 已通过 CDP DevTools 协议获取按比例硬件缩放截图 (${res.width || '自适应'}x${res.height || '自适应'})。` }
       ],
+      isError: false
+    });
+  } catch (err) {
+    log('工具执行失败:', err.message);
+    sendMcpResponse(requestId, {
+      content: [{ type: 'text', text: `[错误]: 截图失败。原因：${err.message}` }],
+      isError: true
+    });
+  }
+}
+
+async function handleBrowserKeypressTool(requestId, key, selector) {
+  try {
+    log(`收到 MCP 工具调用 browser_keypress, key: ${key}, selector: ${selector}...`);
+    const res = await callExtensionAction('keypress', { key, selector: selector || null });
+    if (res && res.success === false) throw new Error(res.error || '按键失败');
+    sendMcpResponse(requestId, {
+      content: [{ type: 'text', text: `[成功]: 已模拟按键 [${key}]` + (selector ? ` 在元素 ${selector}` : '') }],
+      isError: false
+    });
+  } catch (err) {
+    log('工具执行失败:', err.message);
+    sendMcpResponse(requestId, {
+      content: [{ type: 'text', text: `[错误]: 按键失败。原因：${err.message}` }],
+      isError: true
+    });
+  }
+}
+
+async function handleBrowserWaitTool(requestId, mode, selector, timeout) {
+  try {
+    log(`收到 MCP 工具调用 browser_wait, mode: ${mode}, selector: ${selector}, timeout: ${timeout}...`);
+    if (mode === 'element' && !selector) throw new Error('mode=element 时 selector 必填');
+    const tms = Math.min(timeout || 10000, 10000);
+    let res, msg, isOk;
+    if (mode === 'load') {
+      res = await callExtensionAction('waitForLoad', { timeout: tms });
+      isOk = res && res.loaded;
+      msg = isOk ? `[成功]: 页面已加载，耗时 ${res.elapsed}ms。`
+                 : `[超时]: 页面在 ${tms}ms 内未完成加载。`;
+    } else {
+      res = await callExtensionAction('waitForElement', { selector, timeout: tms });
+      isOk = res && res.found;
+      msg = isOk ? `[成功]: 元素 ${selector} 已出现，耗时 ${res.elapsed}ms。`
+                 : `[超时]: 在 ${tms}ms 内未找到元素 ${selector}。`;
+    }
+    sendMcpResponse(requestId, {
+      content: [{ type: 'text', text: msg }],
+      isError: !isOk
+    });
+  } catch (err) {
+    log('工具执行失败:', err.message);
+    sendMcpResponse(requestId, {
+      content: [{ type: 'text', text: `[错误]: 等待失败。原因：${err.message}` }],
       isError: true
     });
   }
@@ -550,3 +1021,55 @@ process.on('SIGTERM', () => {
     process.exit(0);
   });
 });
+
+// ==========================================
+// 5. 端口检测与进程自适应启动逻辑 (Bootstrap)
+// ==========================================
+
+// 端口占用检测函数
+function checkMasterRunning() {
+  const net = require('net');
+  return new Promise((resolve) => {
+    const tester = net.createServer()
+      .once('error', (err) => {
+        if (err.code === 'EADDRINUSE') {
+          resolve(true); // 端口被占用，Master 正在运行
+        } else {
+          resolve(false);
+        }
+      })
+      .once('listening', () => {
+        tester.once('close', () => resolve(false))
+          .close();
+      })
+      .listen(PORT);
+  });
+}
+
+function startMasterServer() {
+  // 绑定 HTTP 的升级请求转发给 WebSocketServer
+  httpServer.on('upgrade', (request, socket, head) => {
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit('connection', ws, request);
+    });
+  });
+
+  // 启动端口监听
+  httpServer.listen(PORT, '0.0.0.0', () => {
+    log(`HTTP 和 WebSocket 服务正在端口 ${PORT} (0.0.0.0) 监听中...`);
+  });
+}
+
+async function bootstrap() {
+  const masterRunning = await checkMasterRunning();
+  if (masterRunning) {
+    isWorkerMode = true;
+    log(`检测到端口 ${PORT} 已被占用，当前进程以 MCP Worker 模式运行。`);
+  } else {
+    isWorkerMode = false;
+    log(`端口 ${PORT} 空闲，当前进程以 Master 模式运行，正在初始化服务...`);
+    startMasterServer();
+  }
+}
+
+bootstrap();
