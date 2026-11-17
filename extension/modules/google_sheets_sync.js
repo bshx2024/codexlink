@@ -117,8 +117,6 @@ function doPost(e) {
 }
 `;
 
-const OFFICIAL_DEFAULT_WEBHOOK = 'https://script.google.com/macros/s/AKfycbwgsylx1cU7CJg2q8F9LMVU8yS2iZ101LuFPH5r9Iwjc5Ug1qKLxhM63hE0HKTGWmEu_g/exec';
-
 class GoogleSheetsSync {
   constructor() {
     this.storageKey = 'comlinkai_gsheet_config';
@@ -127,55 +125,63 @@ class GoogleSheetsSync {
     this._isFlushing = false;
   }
 
+  _getRealKey(key) {
+    if (typeof window !== 'undefined' && window.projectManager) {
+      return window.projectManager.getScopedKey(key);
+    }
+    return key;
+  }
+
   loadConfig() {
-    let cfg = { webhookUrl: OFFICIAL_DEFAULT_WEBHOOK, autoSync: true };
-    // 1. 从 localStorage 读取
+    let cfg = { webhookUrl: '', autoSync: false };
+
+    // 1. 严格针对当前独立站项目读取其专属 Webhook (多项目严格隔离，绝不串号)
+    if (typeof window !== 'undefined' && window.projectManager) {
+      try {
+        const activeProj = window.projectManager.getActiveProject();
+        if (activeProj && activeProj.gsheetWebhook && activeProj.gsheetWebhook.startsWith('https://script.google.com')) {
+          cfg.webhookUrl = activeProj.gsheetWebhook;
+          cfg.autoSync = activeProj.gsheetAutoSync !== false;
+          return cfg;
+        }
+      } catch (e) {}
+    }
+
+    // 2. 从当前项目隔离的专属 localStorage 读取
     try {
-      const data = localStorage.getItem(this.storageKey);
+      const realKey = this._getRealKey(this.storageKey);
+      const data = localStorage.getItem(realKey);
       if (data) {
         cfg = { ...cfg, ...JSON.parse(data) };
       }
     } catch (e) {}
 
-    // 2. 若为空，尝试从当前独立站项目的工程档案中继承
-    if ((!cfg.webhookUrl || !cfg.webhookUrl.startsWith('https://script.google.com')) && typeof window !== 'undefined' && window.projectManager) {
-      try {
-        const activeProj = window.projectManager.getActiveProject();
-        if (activeProj && activeProj.gsheetWebhook) {
-          cfg.webhookUrl = activeProj.gsheetWebhook;
-          cfg.autoSync = activeProj.gsheetAutoSync !== false;
-        }
-      } catch (e) {}
-    }
-
-    if (!cfg.webhookUrl || !cfg.webhookUrl.startsWith('https://script.google.com')) {
-      cfg.webhookUrl = OFFICIAL_DEFAULT_WEBHOOK;
-      cfg.autoSync = true;
-    }
-
-    // 3. 跨设备与跨版本自动恢复：通过 Chrome 账号云同步 (chrome.storage.sync) 异步回填
-    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.sync) {
-      chrome.storage.sync.get([this.storageKey], (res) => {
-        if (res && res[this.storageKey] && res[this.storageKey].webhookUrl) {
-          if (!this.config.webhookUrl) {
-            this.config = { ...this.config, ...res[this.storageKey] };
-            try { localStorage.setItem(this.storageKey, JSON.stringify(this.config)); } catch (e) {}
-            const input = document.getElementById('input-gsheet-webhook');
-            const chk = document.getElementById('chk-gsheet-autosync');
-            if (input && !input.value) input.value = this.config.webhookUrl;
-            if (chk) chk.checked = Boolean(this.config.autoSync);
-            console.log('[GSheetsSync] 成功从 chrome.storage.sync 恢复 Google Sheets Webhook 配置！');
-          }
-        }
-      });
-    }
-
     return cfg;
+  }
+
+  /**
+   * 切换独立站项目时，自动重载当前项目的专属 Webhook 配置
+   */
+  reloadProjectContext() {
+    this.config = this.loadConfig();
+    const input = document.getElementById('input-gsheet-webhook');
+    const chk = document.getElementById('chk-gsheet-autosync');
+    if (input) input.value = this.config.webhookUrl || '';
+    if (chk) chk.checked = Boolean(this.config.autoSync);
+
+    const activeProj = (typeof window !== 'undefined' && window.projectManager) ? window.projectManager.getActiveProject() : null;
+    const projName = activeProj ? (activeProj.name || activeProj.profileName) : '当前独立站';
+    const label = document.getElementById('lbl-gsheet-webhook-target');
+    if (label) {
+      label.textContent = `项目专属 Webhook URL (${projName})`;
+    }
+    console.log(`[GSheetsSync] 已切替至项目 [${projName}] 专属 Google Sheets 配置: ${this.config.webhookUrl ? '已绑定' : '未配置 (纯净待填)'}`);
   }
 
   _loadRetryQueue() {
     try {
-      const data = localStorage.getItem(this.retryQueueKey);
+      const realKey = this._getRealKey(this.retryQueueKey);
+      const data = localStorage.getItem(realKey);
       return data ? JSON.parse(data) : [];
     } catch (e) {
       return [];
@@ -184,7 +190,8 @@ class GoogleSheetsSync {
 
   _saveRetryQueue(queue) {
     try {
-      localStorage.setItem(this.retryQueueKey, JSON.stringify((queue || []).slice(0, 500)));
+      const realKey = this._getRealKey(this.retryQueueKey);
+      localStorage.setItem(realKey, JSON.stringify((queue || []).slice(0, 500)));
     } catch (e) {
       console.warn('[GSheetsSync] 保存离线重试队列失败:', e);
     }
@@ -199,27 +206,30 @@ class GoogleSheetsSync {
       webhookUrl: (webhookUrl || '').trim(),
       autoSync: Boolean(autoSync)
     };
+
+    // 1. 严格写入当前项目的隔离专属 localStorage
     try {
-      localStorage.setItem(this.storageKey, JSON.stringify(this.config));
+      const realKey = this._getRealKey(this.storageKey);
+      localStorage.setItem(realKey, JSON.stringify(this.config));
     } catch (e) {
       console.warn('[GSheetsSync] 保存配置失败:', e);
     }
 
-    // 🌟 三重持久化：写入 chrome.storage.local 与 chrome.storage.sync (登录谷歌账号换机/重装扩展永不丢失)
-    if (typeof chrome !== 'undefined' && chrome.storage) {
-      try {
-        if (chrome.storage.local) chrome.storage.local.set({ [this.storageKey]: this.config });
-        if (chrome.storage.sync) chrome.storage.sync.set({ [this.storageKey]: this.config });
-      } catch (e) {}
-    }
-
-    // 同步至当前项目工程档案
+    // 2. 同步绑定至当前活跃独立站项目的专属工程档案
     if (typeof window !== 'undefined' && window.projectManager) {
       try {
         window.projectManager.updateActiveProject({
           gsheetWebhook: this.config.webhookUrl,
           gsheetAutoSync: this.config.autoSync
         });
+      } catch (e) {}
+    }
+
+    // 3. 写入 chrome.storage.local (项目级隔离键)
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      try {
+        const realKey = this._getRealKey(this.storageKey);
+        chrome.storage.local.set({ [realKey]: this.config });
       } catch (e) {}
     }
 

@@ -6,11 +6,26 @@
 const STORAGE_PROJECTS_KEY = 'comlinkai_projects_v1';
 const STORAGE_ACTIVE_PROJ_KEY = 'comlinkai_active_project_id';
 
+// ⚠️ APIVALE 独立站专属的 Google Sheet Webhook URL (仅属于 APIVALE 项目，严禁作为全局默认配置污染其他项目)
+const APIVALE_DEFAULT_WEBHOOK = 'https://script.google.com/macros/s/AKfycbwgsylx1cU7CJg2q8F9LMVU8yS2iZ101LuFPH5r9Iwjc5Ug1qKLxhM63hE0HKTGWmEu_g/exec';
+
 class ProjectManager {
   constructor() {
     this.projects = this.loadProjects();
     this.activeProjectId = this.loadActiveProjectId();
     this.ensureDefaultProject();
+  }
+
+  /**
+   * 严格判定项目是否属于 APIVALE
+   */
+  isApivaleProject(p) {
+    if (!p) return false;
+    const name = (p.name || '').toLowerCase();
+    const url = (p.websiteUrl || '').toLowerCase();
+    const pName = (p.profileName || '').toLowerCase();
+    const id = p.id || '';
+    return name.includes('apivale') || url.includes('apivale') || pName.includes('apivale') || id === 'proj_default';
   }
 
   loadProjects() {
@@ -73,7 +88,7 @@ class ProjectManager {
         pricingType: legacyProfile.pricingType || 'Freemium',
         faviconUrl: legacyProfile.faviconUrl || 'https://apivale.com/favicon.ico',
         screenshotUrl: legacyProfile.screenshotUrl || 'https://apivale.com/logo.png',
-        gsheetWebhook: 'https://script.google.com/macros/s/AKfycbwgsylx1cU7CJg2q8F9LMVU8yS2iZ101LuFPH5r9Iwjc5Ug1qKLxhM63hE0HKTGWmEu_g/exec',
+        gsheetWebhook: APIVALE_DEFAULT_WEBHOOK,
         gsheetAutoSync: true,
         createdAt: new Date().toISOString()
       };
@@ -84,10 +99,22 @@ class ProjectManager {
     } else {
       let modified = false;
       this.projects.forEach(p => {
-        if (!p.gsheetWebhook || !p.gsheetWebhook.startsWith('https://script.google.com')) {
-          p.gsheetWebhook = 'https://script.google.com/macros/s/AKfycbwgsylx1cU7CJg2q8F9LMVU8yS2iZ101LuFPH5r9Iwjc5Ug1qKLxhM63hE0HKTGWmEu_g/exec';
-          p.gsheetAutoSync = true;
-          modified = true;
+        if (this.isApivaleProject(p)) {
+          // 仅给 APIVALE 专属项目默认绑定其专属 Webhook URL
+          if (!p.gsheetWebhook || !p.gsheetWebhook.startsWith('https://script.google.com')) {
+            p.gsheetWebhook = APIVALE_DEFAULT_WEBHOOK;
+            p.gsheetAutoSync = true;
+            modified = true;
+          }
+        } else {
+          // ⚠️ 非 APIVALE 项目 (如 Slime Keyboard Escape、用户自建独立站等)：
+          // 严禁继承或保留 APIVALE 的 Webhook URL！若之前被全局逻辑误填入，立即执行净化隔离与解绑！
+          if (p.gsheetWebhook === APIVALE_DEFAULT_WEBHOOK) {
+            p.gsheetWebhook = '';
+            p.gsheetAutoSync = false;
+            modified = true;
+            console.log(`[ProjectManager] 成功净化非 APIVALE 项目 [${p.name}]，已解绑清除误继承的 APIVALE Webhook！`);
+          }
         }
       });
       if (modified) this.saveProjects();

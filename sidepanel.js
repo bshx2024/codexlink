@@ -3002,14 +3002,8 @@ function initGoogleSheetsUI() {
   const btnSyncHistory = document.getElementById('btn-sync-gsheet-history');
   const btnPullProbe = document.getElementById('btn-pull-probe-gsheet');
 
-  // 1. 回显已保存的配置
-  const config = window.googleSheetsSync.config;
-  if (inputWebhook && config.webhookUrl) {
-    inputWebhook.value = config.webhookUrl;
-  }
-  if (chkAutoSync) {
-    chkAutoSync.checked = Boolean(config.autoSync);
-  }
+  // 1. 回显当前活跃项目的专属配置
+  window.googleSheetsSync.reloadProjectContext();
 
   // 2. 展开 / 折叠抽屉
   if (btnToggleDrawer && drawer) {
@@ -3042,7 +3036,9 @@ function initGoogleSheetsUI() {
       }
 
       window.googleSheetsSync.saveConfig(url, autoSync);
-      alert('🎉 Google Sheets 谷歌表格 Webhook 配置已成功保存！\n' + (autoSync ? '已开启【自动云同步】功能。' : '当前为手动同步模式。'));
+      const activeProj = window.projectManager ? window.projectManager.getActiveProject() : null;
+      const projName = activeProj ? (activeProj.name || activeProj.profileName) : '当前独立站';
+      alert(`🎉 专属 Google Sheets Webhook 配置已成功保存至项目 [${projName}]！\n` + (autoSync ? '已开启【自动云同步】功能。' : '当前为手动同步模式。'));
     });
   }
 
@@ -3155,6 +3151,7 @@ function initProjectManagerUI() {
       const selectedId = e.target.value;
       window.projectManager.switchProject(selectedId);
       if (window.publishLogger) window.publishLogger.reloadProjectContext();
+      if (window.googleSheetsSync) window.googleSheetsSync.reloadProjectContext();
       if (typeof initBacklinkHelper === 'function') initBacklinkHelper();
       renderDashboardUI();
     });
@@ -3228,7 +3225,10 @@ function initProjectManagerUI() {
       window.projectManager.createProject(name, url, pName, 'support@' + domain, pBio, pBio, pBio, 'AI, SaaS, Tools', 'Freemium', favicon, screenshot);
       modalCreate.classList.add('hidden');
       renderProjectSelect();
+      if (window.publishLogger) window.publishLogger.reloadProjectContext();
+      if (window.googleSheetsSync) window.googleSheetsSync.reloadProjectContext();
       if (typeof initBacklinkHelper === 'function') initBacklinkHelper();
+      renderDashboardUI();
       alert('🎉 成功创建并切换至工作区: ' + name);
     });
   }
