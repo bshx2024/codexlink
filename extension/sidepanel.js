@@ -3004,25 +3004,128 @@ function renderDashboardUI(filter = 'all') {
   activeDashboardFilter = filter;
   if (!window.publishLogger) return;
 
-  const logs = window.publishLogger.getLogs();
-  const recordsContainer = document.getElementById('dash-records-list');
+  const stats = window.publishLogger.getStats ? window.publishLogger.getStats() : {};
+  const elTotal = document.getElementById('dash-stat-total');
+  const elLiveRate = document.getElementById('dash-stat-liverate');
+  const elDoFollow = document.getElementById('dash-stat-dofollow');
+  const elAvgScore = document.getElementById('dash-stat-avgscore');
+  if (elTotal) elTotal.textContent = stats.published || stats.total || 0;
+  if (elLiveRate) elLiveRate.textContent = (stats.liveRate || 0) + '%';
+  if (elDoFollow) elDoFollow.textContent = stats.liveDofollow || 0;
+  if (elAvgScore) elAvgScore.textContent = stats.avgScore || 0;
+
+  const recordsContainer = document.getElementById('dashboard-log-container') || document.getElementById('dash-records-list');
   if (!recordsContainer) return;
 
+  let logs = window.publishLogger.getLogs();
+  if (filter !== 'all') {
+    logs = logs.filter(l => {
+      const vs = l.verifyStatus || 'unchecked';
+      if (filter === 'live_dofollow') return vs === 'live_dofollow' || vs === 'live_nofollow';
+      if (filter === 'pending') return vs === 'pending' || vs === 'unchecked';
+      if (filter === 'removed') return vs === 'removed' || vs.includes('error');
+      return vs === filter;
+    });
+  }
+
   if (logs.length === 0) {
-    recordsContainer.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--text-muted); font-size: 0.76rem;">暂无外链发布与存活记录</div>';
+    recordsContainer.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--text-muted); font-size: 0.76rem;">暂无匹配的外链发布与存活记录</div>';
     return;
   }
 
-  recordsContainer.innerHTML = logs.slice(0, 30).map(function(l) {
+  recordsContainer.innerHTML = logs.slice(0, 50).map(function(l) {
     var isPub = l.status === 'published';
+    var vs = l.verifyStatus || 'unchecked';
+    var vsBadge = '';
+    if (vs === 'live_dofollow') {
+      vsBadge = '<span style="background: rgba(16,185,129,0.2); color: #10b981; border: 1px solid #10b981; padding: 1px 6px; border-radius: 4px; font-size: 0.68rem; font-weight: 600;">🟢 LIVE (DoFollow)</span>';
+    } else if (vs === 'live_nofollow') {
+      vsBadge = '<span style="background: rgba(52,211,153,0.15); color: #34d399; border: 1px solid #34d399; padding: 1px 6px; border-radius: 4px; font-size: 0.68rem; font-weight: 600;">🟡 LIVE (NoFollow)</span>';
+    } else if (vs === 'pending') {
+      vsBadge = '<span style="background: rgba(251,191,36,0.15); color: #fbbf24; border: 1px solid #fbbf24; padding: 1px 6px; border-radius: 4px; font-size: 0.68rem; font-weight: 600;">⏳ 待审核 (Pending)</span>';
+    } else if (vs === 'removed') {
+      vsBadge = '<span style="background: rgba(248,113,113,0.15); color: #f87171; border: 1px solid #f87171; padding: 1px 6px; border-radius: 4px; font-size: 0.68rem; font-weight: 600;">🔴 未公开/被拒</span>';
+    } else if (vs.includes('error')) {
+      vsBadge = '<span style="background: rgba(239,68,68,0.15); color: #ef4444; border: 1px solid #ef4444; padding: 1px 6px; border-radius: 4px; font-size: 0.68rem; font-weight: 600;">⚠️ 异常</span>';
+    } else {
+      vsBadge = '<span style="background: rgba(148,163,184,0.15); color: #94a3b8; border: 1px solid #94a3b8; padding: 1px 6px; border-radius: 4px; font-size: 0.68rem;">⚪ 未检测</span>';
+    }
+
     return '<div class="dash-log-card" style="background: hsla(220, 30%, 6%, 0.7); border: 1px solid hsla(217, 32%, 18%, 0.7); border-radius: 6px; padding: 8px 10px; margin-bottom: 6px; font-size: 0.74rem;">' +
-      '<div style="display: flex; justify-content: space-between;">' +
-        '<span style="font-weight: 600; color: var(--text-main);">' + (l.domain || l.url) + '</span>' +
-        '<span style="color: ' + (isPub ? '#34d399' : '#f87171') + '; font-weight: 600;">' + (isPub ? '✔ 已发布' : '跳过') + '</span>' +
+      '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">' +
+        '<a href="' + l.url + '" target="_blank" style="font-weight: 600; color: #00f2fe; text-decoration: none; max-width: 65%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' + (l.domain || l.url) + '</a>' +
+        '<div>' + vsBadge + '</div>' +
       '</div>' +
-      '<div style="font-size: 0.68rem; color: var(--text-muted); margin-top: 4px;">' + (l.timestamp ? new Date(l.timestamp).toLocaleString() : '') + '</div>' +
+      '<div style="color: var(--text-muted); font-size: 0.7rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 3px;">' + (l.title || '无标题') + '</div>' +
+      '<div style="display: flex; justify-content: space-between; font-size: 0.66rem; color: var(--text-muted);">' +
+        '<span>' + (l.timestamp ? new Date(l.timestamp).toLocaleString() : '') + '</span>' +
+        '<span style="color: ' + (isPub ? '#34d399' : '#f87171') + ';">' + (isPub ? '✔ 已提交' : '跳过') + '</span>' +
+      '</div>' +
     '</div>';
   }).join('');
+}
+
+function initDashboardEvents() {
+  // 1. 过滤标签交互
+  const pills = document.querySelectorAll('#dash-filter-pills .dash-pill');
+  pills.forEach(pill => {
+    pill.addEventListener('click', () => {
+      pills.forEach(p => {
+        p.classList.remove('active');
+        p.style.background = 'transparent';
+        p.style.borderColor = 'hsla(217, 32%, 22%, 0.8)';
+        p.style.color = 'var(--text-muted)';
+      });
+      pill.classList.add('active');
+      pill.style.background = 'rgba(96,165,250,0.15)';
+      pill.style.borderColor = '#60a5fa';
+      pill.style.color = '#60a5fa';
+      renderDashboardUI(pill.dataset.filter || 'all');
+    });
+  });
+
+  // 2. 导出 CSV
+  const btnExport = document.getElementById('btn-export-dashboard-csv');
+  if (btnExport && window.publishLogger) {
+    btnExport.addEventListener('click', () => window.publishLogger.exportCSV());
+  }
+
+  // 3. 一键检测外链存活
+  const btnVerifyAll = document.getElementById('btn-verify-all-links');
+  const probeStatus = document.getElementById('dash-probe-status');
+  if (btnVerifyAll && window.linkChecker && window.publishLogger) {
+    btnVerifyAll.addEventListener('click', async () => {
+      const logs = window.publishLogger.getLogs();
+      if (!logs.length) {
+        alert('当前暂无可检测的外链发布记录！');
+        return;
+      }
+      btnVerifyAll.disabled = true;
+      btnVerifyAll.textContent = '⏳ 正在探针检测...';
+      if (probeStatus) probeStatus.textContent = `探针正在并发扫描中 (共 ${logs.length} 条)...`;
+
+      const activeProj = window.projectManager ? window.projectManager.getActiveProject() : null;
+      const targetWebsite = activeProj ? (activeProj.websiteUrl || activeProj.url || 'apivale.com') : 'apivale.com';
+
+      try {
+        await window.linkChecker.checkBatch(logs, targetWebsite, '', (curr, total, item) => {
+          if (probeStatus) probeStatus.textContent = `扫描中: [${curr}/${total}] ${item.result.verifyStatus.toUpperCase()}`;
+          if (item && item.id) {
+            window.publishLogger.updateVerifyStatus(item.id, item.result);
+          }
+        });
+        if (probeStatus) probeStatus.textContent = `🎉 探针扫描完成！已更新全部外链存活状态。`;
+        renderDashboardUI();
+        alert('🎉 外链存活探针检测完成！状态看板已全面更新。');
+      } catch (err) {
+        if (probeStatus) probeStatus.textContent = `探针检测中断: ${err.message}`;
+        alert('外链探针检测失败: ' + err.message);
+      } finally {
+        btnVerifyAll.disabled = false;
+        btnVerifyAll.textContent = '⚡ 一键检测外链存活';
+      }
+    });
+  }
 }
 
 function initGoogleSheetsUI() {
@@ -3135,7 +3238,7 @@ function initGoogleSheetsUI() {
     });
   }
 
-  // 7. 拉取表格数据并检测存活
+  // 7. 拉取表格数据并并发执行存活探针检测
   if (btnPullProbe) {
     btnPullProbe.addEventListener('click', async () => {
       if (!window.googleSheetsSync.isConfigured()) {
@@ -3144,11 +3247,59 @@ function initGoogleSheetsUI() {
         return;
       }
       btnPullProbe.disabled = true;
-      btnPullProbe.textContent = '⏳ 拉取中...';
+      btnPullProbe.textContent = '⏳ 拉取表格中...';
+      const probeStatus = document.getElementById('dash-probe-status');
+      if (probeStatus) probeStatus.textContent = '正在从 Google Sheet 读取最新发布记录...';
+
       try {
         const rows = await window.googleSheetsSync.fetchLogEntriesFromSheet();
-        alert(`📥 成功从 Google Sheet 拉取到 ${rows.length} 条发布记录！`);
+        if (!rows.length) {
+          alert('Google Sheet 中当前尚无可检测的发布记录！');
+          return;
+        }
+
+        // 同步入库本地 publishLogger（若本地为空或缺失）
+        if (window.publishLogger) {
+          const existingLogs = window.publishLogger.getLogs();
+          const existingUrls = new Set(existingLogs.map(l => l.url));
+          rows.forEach((r, idx) => {
+            if (!existingUrls.has(r.url)) {
+              window.publishLogger.logAction({
+                id: 'gsheet_' + Date.now() + '_' + idx,
+                timestamp: r.timestamp || new Date().toISOString(),
+                url: r.url,
+                domain: r.domain,
+                title: r.title,
+                status: r.status || 'published',
+                verifyStatus: r.verifyStatus || 'unchecked',
+                relType: r.relType || 'unknown',
+                relevanceScore: r.relevanceScore || 95,
+                comment: r.comment || ''
+              });
+            }
+          });
+        }
+
+        const logs = window.publishLogger ? window.publishLogger.getLogs() : [];
+        const activeProj = window.projectManager ? window.projectManager.getActiveProject() : null;
+        const targetWebsite = activeProj ? (activeProj.websiteUrl || activeProj.url || 'apivale.com') : 'apivale.com';
+
+        btnPullProbe.textContent = `⏳ 探针扫描中 (共 ${logs.length} 条)...`;
+        if (window.linkChecker) {
+          await window.linkChecker.checkBatch(logs, targetWebsite, '', (curr, total, item) => {
+            btnPullProbe.textContent = `⏳ 扫描 [${curr}/${total}]`;
+            if (probeStatus) probeStatus.textContent = `探针扫描中: [${curr}/${total}] ${item.result.verifyStatus.toUpperCase()}`;
+            if (item && item.id && window.publishLogger) {
+              window.publishLogger.updateVerifyStatus(item.id, item.result);
+            }
+          });
+        }
+
+        renderDashboardUI();
+        if (probeStatus) probeStatus.textContent = `🎉 成功拉取并完成 ${logs.length} 条外链存活探针扫描！`;
+        alert(`🎉 成功从 Google Sheet 拉取 ${rows.length} 条记录，并已完成全量存活探针检测！`);
       } catch (err) {
+        if (probeStatus) probeStatus.textContent = `拉取/探针失败: ${err.message}`;
         alert('拉取失败: ' + err.message);
       } finally {
         btnPullProbe.disabled = false;
@@ -3156,6 +3307,9 @@ function initGoogleSheetsUI() {
       }
     });
   }
+
+  // 初始化看板事件监听
+  initDashboardEvents();
 }
 
 // ==========================================

@@ -75,7 +75,28 @@ function doPost(e) {
       })).setMimeType(ContentService.MimeType.JSON);
     }
 
-    // 2. 处理常规日志写库 (按项目 Tab 归集)
+    // 2. 处理外链存活状态更新指令 (update_status / update_batch)
+    if (data.action === "update_status") {
+      var projTabName = data.projectName || null;
+      var sheet = projTabName ? (ss.getSheetByName(projTabName) || ss.getActiveSheet()) : ss.getActiveSheet();
+      var rows = sheet.getDataRange().getValues();
+      var updated = 0;
+      var targetUrl = (data.url || "").trim();
+      for (var i = 1; i < rows.length; i++) {
+        if (rows[i][1] === targetUrl) {
+          if (data.verifyStatus) sheet.getRange(i + 1, 6).setValue(data.verifyStatus);
+          if (data.relType) sheet.getRange(i + 1, 7).setValue(data.relType);
+          updated++;
+        }
+      }
+      return ContentService.createTextOutput(JSON.stringify({
+        "result": "success",
+        "updatedCount": updated,
+        "message": "已成功更新 " + updated + " 条记录的存活状态"
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // 3. 处理常规日志写库 (按项目 Tab 归集)
     var projTabName = data.projectName || null;
     var sheet = projTabName ? (ss.getSheetByName(projTabName) || ss.getActiveSheet()) : ss.getActiveSheet();
     
