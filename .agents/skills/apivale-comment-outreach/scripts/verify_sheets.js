@@ -55,3 +55,4 @@ const searchDomain = args.domain || null;
     console.error('查询异常:', err.message);
   }
 })();
+

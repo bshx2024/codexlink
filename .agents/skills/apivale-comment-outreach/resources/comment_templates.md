@@ -37,3 +37,4 @@ Excellent analysis distinguishing between verbal open-source commitments and the
 ```text
 Spot-on configuration breakdown for developer teams integrating alternative frontier models into local IDE workflows. Calling out custom base URL overrides and streaming response buffer handling solves the exact issue where CLI agents hang during long reasoning token generations. In our infrastructure gateway routing at APIVALE, we frequently see teams struggling with rate limits and unexpected token billing when CLI tools silently re-send entire session conversation histories on each turn. Enforcing client-side caching and dynamic payload pruning cut operational token consumption significantly. Have you encountered any issues with tool-call schema adherence when routing complex multi-step terminal tool invocations through custom OpenAI/Anthropic proxy protocols?
 ```
+
