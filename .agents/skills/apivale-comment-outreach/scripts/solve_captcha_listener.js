@@ -120,3 +120,4 @@ module.exports = {
 if (require.main === module) {
   handleCaptchaOnActiveTab().then(res => console.log('Final Result:', res));
 }
+
