@@ -1,0 +1,68 @@
+{
+  "defaultEmail": "support@apivale.com",
+  "mappings": [
+    {
+      "topic": "Claude Fable 5.2 API 速度、价格、成本指南",
+      "keywords": ["claude fable 5.2", "fable 5.2 api", "fable 5.2 pricing", "fable fast mode", "adaptive thinking"],
+      "targetUrl": "https://apivale.com/blog/claude-fable-5-2-api-pricing-guide/",
+      "author": "Kenji Tanaka @ APIVALE",
+      "role": "AI Developer Relations Engineer, APIVALE"
+    },
+    {
+      "topic": "Claude Fable 5.2 vs Opus 5.5 编程基准评测与成本对比",
+      "keywords": ["claude fable 5.2 vs opus 5.5", "fable vs opus", "coding benchmarks", "frontiercode", "multi-agent cost"],
+      "targetUrl": "https://apivale.com/blog/claude-fable-5-2-vs-opus-5-5-coding-benchmarks-agent-cost-guide/",
+      "author": "Sarah Chen @ APIVALE",
+      "role": "Principal AI Infrastructure Architect, APIVALE"
+    },
+    {
+      "topic": "Qwen 4 预览版与 Qwen4-Max API 接入指南",
+      "keywords": ["qwen 4", "qwen4-max", "qwen 4 preview", "token plan", "alibaba open models", "27b"],
+      "targetUrl": "https://apivale.com/blog/qwen-4-preview-api-token-plan-guide/",
+      "author": "Chen Wei @ APIVALE",
+      "role": "Senior AI Gateway Architect, APIVALE"
+    },
+    {
+      "topic": "Qwen 4 Max API 基准评测、27B 路线图与定价",
+      "keywords": ["qwen 4 max api", "qwen 4 benchmarks", "qwen 27b roadmap", "qwen pricing"],
+      "targetUrl": "https://apivale.com/blog/qwen-4-max-api-benchmarks-guide/",
+      "author": "Chen Wei @ APIVALE",
+      "role": "Senior AI Gateway Architect, APIVALE"
+    },
+    {
+      "topic": "Kimi K3 接入 OpenAI Codex CLI 与 VS Code",
+      "keywords": ["kimi k3 codex cli", "kimi k3 vscode", "connect kimi k3"],
+      "targetUrl": "https://apivale.com/blog/how-to-connect-kimi-k3-to-codex-cli/",
+      "author": "Alex Rivera @ APIVALE",
+      "role": "Senior Cloud Architect & API Integrations, APIVALE"
+    },
+    {
+      "topic": "Kimi K3 接入 Claude Code CLI 与 Cursor IDE",
+      "keywords": ["kimi k3 claude code", "kimi k3 cursor", "claude code cli setup"],
+      "targetUrl": "https://apivale.com/blog/how-to-connect-kimi-k3-to-claude-code-cli/",
+      "author": "Alex Rivera @ APIVALE",
+      "role": "Senior Cloud Architect & API Integrations, APIVALE"
+    },
+    {
+      "topic": "Claude Opus 5 接入 Claude Code CLI",
+      "keywords": ["claude opus 5 claude code", "how to connect claude opus 5"],
+      "targetUrl": "https://apivale.com/blog/how-to-connect-claude-opus-5-to-claude-code-cli/",
+      "author": "Alex Rivera @ APIVALE",
+      "role": "Senior Cloud Architect & API Integrations, APIVALE"
+    },
+    {
+      "topic": "OpenRouter 最佳替代品横评、免 KYC API 网关",
+      "keywords": ["openrouter alternatives", "openrouter alternative", "api proxy", "zero kyc", "paypal billing"],
+      "targetUrl": "https://apivale.com/blog/openrouter-alternatives/",
+      "author": "Alex Rivera @ APIVALE",
+      "role": "Senior Cloud Architect & API Integrations, APIVALE"
+    },
+    {
+      "topic": "大模型 API 成本优化与 Prompt Cache 架构",
+      "keywords": ["llm cost optimization", "prompt cache", "prompt caching", "slash api bills"],
+      "targetUrl": "https://apivale.com/blog/llm-cost-optimization-guide/",
+      "author": "Elena Rostova @ APIVALE",
+      "role": "Lead AI Performance Engineer, APIVALE"
+    }
+  ]
+}
