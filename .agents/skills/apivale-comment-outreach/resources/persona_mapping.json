@@ -63,6 +63,20 @@
       "targetUrl": "https://apivale.com/blog/llm-cost-optimization-guide/",
       "author": "Elena Rostova @ APIVALE",
       "role": "Lead AI Performance Engineer, APIVALE"
+    },
+    {
+      "topic": "Sage S2.1 Flash API 321B 科学 MoE 与网关路由指南",
+      "keywords": ["sage s2.1 flash", "sage s2.1 api", "321b moe", "internlm sage", "mle-bench"],
+      "targetUrl": "https://apivale.com/blog/sage-s2-1-flash-api-pricing-moe-router-guide/",
+      "author": "Elena Rostova @ APIVALE",
+      "role": "Lead AI Performance Engineer, APIVALE"
+    },
+    {
+      "topic": "GPT-6.2 Sol API 定价、1M 上下文与网关路由指南",
+      "keywords": ["gpt-6.2 sol api", "gpt-6.2 sol", "gpt 6.2", "openai sol", "gpqa 96%", "1m context"],
+      "targetUrl": "https://apivale.com/blog/gpt-6-2-sol-api-pricing-benchmarks-guide/",
+      "author": "Alex Rivera @ APIVALE",
+      "role": "Senior Cloud Architect & Protocol Engineer, APIVALE"
     }
   ]
 }
