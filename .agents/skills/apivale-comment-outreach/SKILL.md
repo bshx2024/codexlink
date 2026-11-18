@@ -116,6 +116,12 @@ node .agents/skills/apivale-comment-outreach/scripts/submit_comment.js \
 > - 真实输入框具有 placeholder（如 `Leave a comment...`）或经过前端 JS 动态换名；
 > - 详细防坑手段参阅 [honeypot_playbook.md](./references/honeypot_playbook.md)。
 
+> [!TIP]
+> **验证码墙破除与收尾机制 (Turnstile / reCAPTCHA / hCaptcha)**：
+> - 针对开启强验证码的高权重博客，调用 [solve_captcha_listener.js](./scripts/solve_captcha_listener.js) 配合 2Captcha 插件进行定向解题；
+> - 坚守三大铁律：杜绝全局 autoSolve 乱扣费、杜绝 form.submit 绕过验证、确保 useProxy 维持 IP 一致；
+> - 完整战术手册参阅 [captcha_handling_playbook.md](./references/captcha_handling_playbook.md)。
+
 ### 步骤 5：截屏留存与审核凭证捕获
 - 填写完毕后抓取 `_form_filled.jpg`；
 - 点击提交后等待 4~6 秒，抓取 `_post_submit.jpg`；
