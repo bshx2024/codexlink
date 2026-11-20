@@ -22,16 +22,25 @@ function parseArgs() {
   return args;
 }
 
+function getExpertEmail(authorName) {
+  if (!authorName) return 'alex.rivera@apivale.com';
+  let clean = authorName.replace(/@.*$/, '').replace(/\|.*$/, '').trim();
+  clean = clean.replace(/^(dr|mr|ms|mrs)\.?\s+/i, '');
+  const parts = clean.toLowerCase().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return 'alex.rivera@apivale.com';
+  return `${parts.join('.')}@apivale.com`;
+}
+
 const args = parseArgs();
 const pageUrl = args.page;
 const targetUrl = args.target;
 const authorName = args.author;
-const authorEmail = args.email || 'support@apivale.com';
+const authorEmail = args.email || getExpertEmail(authorName);
 const commentText = args.comment;
 
 if (!pageUrl || !targetUrl || !authorName || !commentText) {
   console.error('缺少必要参数！');
-  console.error('用法: node submit_comment.js --page "<博文URL>" --target "<落地页URL>" --author "<作者名>" --comment "<评论正文>" [--email "support@apivale.com"]');
+  console.error('用法: node submit_comment.js --page "<博文URL>" --target "<落地页URL>" --author "<作者名>" --comment "<评论正文>" [--email "expert.name@apivale.com"]');
   process.exit(1);
 }
 

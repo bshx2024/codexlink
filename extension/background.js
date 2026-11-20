@@ -133,6 +133,41 @@ async function cdpPhysicalScroll(tabId, deltaY = 300) {
   }
 }
 
+// CDP 模拟物理键盘按键与原生文本插入 (Input.dispatchKeyEvent / Input.insertText)
+async function cdpPhysicalType(tabId, text) {
+  await attachCDP(tabId);
+  try {
+    if (text.length <= 60) {
+      // 短文本（如姓名、邮箱、网址）：逐字派发原生物理按键事件，真实 isTrusted
+      for (let i = 0; i < text.length; i++) {
+        const char = text[i];
+        await sendCDPCommand(tabId, "Input.dispatchKeyEvent", {
+          type: "keyDown",
+          text: char,
+          unmodifiedText: char
+        });
+        await sendCDPCommand(tabId, "Input.dispatchKeyEvent", {
+          type: "keyUp"
+        });
+        const jitter = Math.floor(Math.random() * 25 + 20); // 20ms ~ 45ms 击键微延迟
+        await new Promise(r => setTimeout(r, jitter));
+      }
+    } else {
+      // 长文本（评论正文）：分段模拟按键文本流注入，保留原生 isTrusted 输入管道与输入事件
+      const chunkSize = 25;
+      for (let i = 0; i < text.length; i += chunkSize) {
+        const chunk = text.slice(i, i + chunkSize);
+        await sendCDPCommand(tabId, "Input.insertText", { text: chunk });
+        const pause = Math.floor(Math.random() * 40 + 30); // 30ms ~ 70ms 块间延迟
+        await new Promise(r => setTimeout(r, pause));
+      }
+    }
+    return { success: true };
+  } catch (err) {
+    throw err;
+  }
+}
+
 // --------------------------------------------------------------------------
 // 2. CDP 原生截屏缩放求解算法 (借鉴自 browser-hands)
 // --------------------------------------------------------------------------
@@ -350,6 +385,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           tabId = tab.id;
         }
         await cdpPhysicalScroll(tabId, message.deltaY || 300);
+        sendResponse({ success: true });
+      } catch (err) {
+        sendResponse({ success: false, error: err.message });
+      }
+    })();
+    return true;
+  }
+
+  // 4.2.1 CDP 物理按键与原生打字
+  if (message.type === 'CDP_PHYSICAL_TYPE') {
+    (async () => {
+      try {
+        let tabId = message.tabId;
+        if (!tabId) {
+          const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+          if (!tab) throw new Error('未找到活跃标签页。');
+          tabId = tab.id;
+        }
+        await cdpPhysicalType(tabId, message.text || '');
         sendResponse({ success: true });
       } catch (err) {
         sendResponse({ success: false, error: err.message });

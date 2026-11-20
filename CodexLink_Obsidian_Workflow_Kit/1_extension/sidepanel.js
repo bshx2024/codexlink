@@ -957,7 +957,7 @@ function initBacklinkHelper() {
     btnTemplateZh.addEventListener('click', () => {
       const currentUrl = (document.getElementById('profile-url') ? document.getElementById('profile-url').value.trim() : '') || 'https://apivale.com/';
       setVal('profile-name', 'Alex @ APIVALE');
-      setVal('profile-email', 'support@apivale.com');
+      setVal('profile-email', 'alex.rivera@apivale.com');
       setVal('profile-url', currentUrl);
       setVal('profile-tagline', '一站式 AI 大模型 API 聚合与转接平台');
       setVal('profile-bio', '专注 AI 工具与大模型 API 网关的开发者平台');

@@ -1,0 +1,27 @@
+﻿站点,档位,费用,DR,月访问(2026-10),怎么用
+dev.to,优先做,免费,91,448.5万,把 /blog 接入教程改写成技术文，文末链原文
+news.ycombinator.com,优先做,免费,91,"4,642万",Show HN 发一次，讲技术方案不讲卖点
+reddit.com,优先做,免费,95,37.8亿,r/LocalLLaMA、r/LLMDevs 发真实经验帖
+alternativeto.net,优先做,免费,82,256.8万,建 OpenRouter 替代条目→/blog/openrouter-alternatives/
+saashub.com,优先做,免费,81,72.8万,建产品条目→首页
+github.com,优先做,免费,未实测,未实测,awesome-list / SDK README 里被提及
+aidirs.org,优先做,免费,68,1.1万,仍在免费期，AI 目录收录
+fazier.com,第二批,免费(挂徽章),85,9.8万,AI 目录收录→首页
+dang.ai,第二批,免费排队/付费$50,83,55.3万,走免费档；近3月涨 27.5%
+futurepedia.io,第二批,免费提交(价格未核实),73,52.8万,近3月涨 28.4%，值得试免费档
+uneed.best,第二批,免费排队,77,20.1万,Launch 提交→首页
+indiehackers.com,第二批,免费,82,76.0万,发创业进展帖，讲为什么做这个 API 网关
+peerlist.io,第二批,免费,78,44.0万,Launch 展示→首页
+crunchbase.com,第二批,免费基础档案,91,280.6万,建公司档案，树品牌信任
+startupfa.me,第二批,免费(挂徽章),84,5.8万,可交但流量在跌(-15.8%)
+sideprojectors.com,第二批,免费,72,15.9万,挂项目展示
+promoteproject.com,第二批,免费(攒积分),49,3.9万,秒上线，但权重低，只当铺量
+backlinkdirs.com,第二批,免费,未实测,未实测,按 Free 标签批量找可交的站
+producthunt.com,等有用户再做,免费,92,567.7万,有 20~30 个真实用户再发，一次机会
+medium.com,等有用户再做,免费,未实测,未实测,长文科普，优先级低于 dev.to
+v2ex.com,等有用户再做,免费(要邀请码),79,558.9万,65.7% 中国流量，只对国内开发者有用
+theresanaiforthat.com,先别花钱,免费排队/付费加速,77,432.4万,先走免费队列
+toolify.ai,先别花钱,免费提交/付费推广$99,73,97.9万,先走免费提交
+creati.ai,先别花钱,付费$69,52,11.1万,3个月流量 -65.6%，不建议付
+topai.tools,先别花钱,付费~$47,65,12.1万,3个月流量 -81.1%，不建议付
+blogger.com,不建议,免费,未实测,未实测,Google 自家博客平台，内容博客不适合产品站

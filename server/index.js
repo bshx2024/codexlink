@@ -226,6 +226,13 @@ const httpServer = http.createServer(async (req, res) => {
     return;
   }
 
+  // 1.2 健康检查路由
+  if (req.url === '/health' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify({ status: 'ok', port: PORT }));
+    return;
+  }
+
   // 1.3 获取 Codex 配置的 REST API
   if (req.url === '/api/codex-config' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });

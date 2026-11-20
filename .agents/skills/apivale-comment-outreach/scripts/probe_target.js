@@ -47,6 +47,7 @@ async function probeUrl(url) {
           const hasUrl = b.includes('name="url"') || b.includes('id="url"');
           const hasTextarea = b.includes('<textarea');
           const isClosed = b.toLowerCase().includes('comments are closed');
+          const isGhostHidden = /#comments\s*\{\s*display:\s*none/i.test(b) || /div#comments\s*\{\s*display:\s*none/i.test(b) || /\.comments-area\s*\{\s*display:\s*none/i.test(b) || /#respond\s*\{\s*display:\s*none/i.test(b);
           const title = (b.match(/<title>([^<]+)<\/title>/i) || [])[1] || '';
           
           const domain = u.hostname;
@@ -63,8 +64,9 @@ async function probeUrl(url) {
             hasUrl,
             hasTextarea,
             isClosed,
+            isGhostHidden,
             sheetHits,
-            canProceed: res.statusCode === 200 && hasForm && hasUrl && !isClosed && sheetHits === 0
+            canProceed: res.statusCode === 200 && hasForm && hasUrl && !isClosed && !isGhostHidden && sheetHits === 0
           });
         });
       }).on('error', e => resolve({ url, error: e.message, canProceed: false }));
@@ -78,6 +80,8 @@ async function probeUrl(url) {
   if (!result.canProceed) {
     if (result.sheetHits > 0) {
       console.warn(`[警告] 域名 ${result.domain} 在 Google 表格中已存在 ${result.sheetHits} 条记录，违反防重复准则！`);
+    } else if (result.isGhostHidden) {
+      console.warn(`[警告] 该站点评论区被 CSS (如 display: none) 强制隐藏 (Ghost Form)，无法获得真实视觉曝光！`);
     } else if (!result.hasUrl) {
       console.warn(`[警告] 该站点评论区无 Website/URL 输入字段！`);
     } else if (result.isClosed) {

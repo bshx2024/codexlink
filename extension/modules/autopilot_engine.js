@@ -377,11 +377,16 @@ class AutopilotEngine {
       const { commentText: generatedComment, relevanceScore } = await this.generateAICommentForTab(extracted, profile);
 
       // 执行真实 DOM 自动预填与提交按钮高亮定位
+      const authorName = profile.profileName || profile.name || 'Alex Rivera @ APIVALE';
+      const cleanName = authorName.replace(/@.*$/, '').replace(/\|.*$/, '').trim().replace(/^(dr|mr|ms|mrs)\.?\s+/i, '');
+      const emailParts = cleanName.toLowerCase().split(/\s+/).filter(Boolean);
+      const derivedEmail = emailParts.length > 0 ? `${emailParts.join('.')}@apivale.com` : 'alex.rivera@apivale.com';
+
       await chrome.scripting.executeScript({
         target: { tabId: this.workerTabId },
         args: [{
-          name: profile.profileName || profile.name || 'Alex',
-          email: profile.profileEmail || profile.email || 'support@apivale.com',
+          name: authorName,
+          email: profile.profileEmail || profile.email || derivedEmail,
           url: profile.websiteUrl || profile.url || 'https://apivale.com/',
           comment: generatedComment
         }],

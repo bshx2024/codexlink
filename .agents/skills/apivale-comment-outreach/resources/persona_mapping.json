@@ -1,11 +1,13 @@
 {
-  "defaultEmail": "support@apivale.com",
+  "emailRule": "firstname.lastname@apivale.com",
+  "note": "For blog comment outreach, ALWAYS use the author expert's dedicated email (e.g. elena.rostova@apivale.com). NEVER use support@apivale.com to avoid spam bombarding the corporate support mailbox.",
   "mappings": [
     {
       "topic": "Claude Fable 5.2 API 速度、价格、成本指南",
       "keywords": ["claude fable 5.2", "fable 5.2 api", "fable 5.2 pricing", "fable fast mode", "adaptive thinking"],
       "targetUrl": "https://apivale.com/blog/claude-fable-5-2-api-pricing-guide/",
       "author": "Kenji Tanaka @ APIVALE",
+      "email": "kenji.tanaka@apivale.com",
       "role": "AI Developer Relations Engineer, APIVALE"
     },
     {
@@ -13,6 +15,7 @@
       "keywords": ["claude fable 5.2 vs opus 5.5", "fable vs opus", "coding benchmarks", "frontiercode", "multi-agent cost"],
       "targetUrl": "https://apivale.com/blog/claude-fable-5-2-vs-opus-5-5-coding-benchmarks-agent-cost-guide/",
       "author": "Sarah Chen @ APIVALE",
+      "email": "sarah.chen@apivale.com",
       "role": "Principal AI Infrastructure Architect, APIVALE"
     },
     {
@@ -20,6 +23,7 @@
       "keywords": ["qwen 4", "qwen4-max", "qwen 4 preview", "token plan", "alibaba open models", "27b"],
       "targetUrl": "https://apivale.com/blog/qwen-4-preview-api-token-plan-guide/",
       "author": "Chen Wei @ APIVALE",
+      "email": "chen.wei@apivale.com",
       "role": "Senior AI Gateway Architect, APIVALE"
     },
     {
@@ -27,6 +31,7 @@
       "keywords": ["qwen 4 max api", "qwen 4 benchmarks", "qwen 27b roadmap", "qwen pricing"],
       "targetUrl": "https://apivale.com/blog/qwen-4-max-api-benchmarks-guide/",
       "author": "Chen Wei @ APIVALE",
+      "email": "chen.wei@apivale.com",
       "role": "Senior AI Gateway Architect, APIVALE"
     },
     {
@@ -34,6 +39,7 @@
       "keywords": ["kimi k3 codex cli", "kimi k3 vscode", "connect kimi k3"],
       "targetUrl": "https://apivale.com/blog/how-to-connect-kimi-k3-to-codex-cli/",
       "author": "Alex Rivera @ APIVALE",
+      "email": "alex.rivera@apivale.com",
       "role": "Senior Cloud Architect & API Integrations, APIVALE"
     },
     {
@@ -41,6 +47,7 @@
       "keywords": ["kimi k3 claude code", "kimi k3 cursor", "claude code cli setup"],
       "targetUrl": "https://apivale.com/blog/how-to-connect-kimi-k3-to-claude-code-cli/",
       "author": "Alex Rivera @ APIVALE",
+      "email": "alex.rivera@apivale.com",
       "role": "Senior Cloud Architect & API Integrations, APIVALE"
     },
     {
@@ -48,6 +55,7 @@
       "keywords": ["claude opus 5 claude code", "how to connect claude opus 5"],
       "targetUrl": "https://apivale.com/blog/how-to-connect-claude-opus-5-to-claude-code-cli/",
       "author": "Alex Rivera @ APIVALE",
+      "email": "alex.rivera@apivale.com",
       "role": "Senior Cloud Architect & API Integrations, APIVALE"
     },
     {
@@ -55,6 +63,7 @@
       "keywords": ["openrouter alternatives", "openrouter alternative", "api proxy", "zero kyc", "paypal billing"],
       "targetUrl": "https://apivale.com/blog/openrouter-alternatives/",
       "author": "Alex Rivera @ APIVALE",
+      "email": "alex.rivera@apivale.com",
       "role": "Senior Cloud Architect & API Integrations, APIVALE"
     },
     {
@@ -62,6 +71,7 @@
       "keywords": ["llm cost optimization", "prompt cache", "prompt caching", "slash api bills"],
       "targetUrl": "https://apivale.com/blog/llm-cost-optimization-guide/",
       "author": "Elena Rostova @ APIVALE",
+      "email": "elena.rostova@apivale.com",
       "role": "Lead AI Performance Engineer, APIVALE"
     },
     {
@@ -69,6 +79,7 @@
       "keywords": ["sage s2.1 flash", "sage s2.1 api", "321b moe", "internlm sage", "mle-bench"],
       "targetUrl": "https://apivale.com/blog/sage-s2-1-flash-api-pricing-moe-router-guide/",
       "author": "Elena Rostova @ APIVALE",
+      "email": "elena.rostova@apivale.com",
       "role": "Lead AI Performance Engineer, APIVALE"
     },
     {
@@ -76,8 +87,40 @@
       "keywords": ["gpt-6.2 sol api", "gpt-6.2 sol", "gpt 6.2", "openai sol", "gpqa 96%", "1m context"],
       "targetUrl": "https://apivale.com/blog/gpt-6-2-sol-api-pricing-benchmarks-guide/",
       "author": "Alex Rivera @ APIVALE",
+      "email": "alex.rivera@apivale.com",
       "role": "Senior Cloud Architect & Protocol Engineer, APIVALE"
+    },
+    {
+      "topic": "Sol 6.1 vs 6.2 速度、定价与网关迁移实战指南",
+      "keywords": ["sol 6.1 vs 6.2", "sol 6.1 vs sol 6.2", "gpt-6.1 vs gpt-6.2", "sol 6.2 benchmarks", "sol 6.2 pricing", "65 tps", "sol speedup"],
+      "targetUrl": "https://apivale.com/blog/sol-6-1-vs-6-2-pricing-benchmarks-guide/",
+      "author": "Sofia Costa @ APIVALE",
+      "email": "sofia.costa@apivale.com",
+      "role": "Lead LLM Performance & Inference Architect, APIVALE"
+    },
+    {
+      "topic": "Gemini 4 Neon API 定价、1M 上下文与网关路由指南",
+      "keywords": ["gemini 4 neon", "gemini neon", "gemini 4 neon api", "gemini 4 carbon", "gemini 4 hydrogen", "antigravity cli", "aa index 61", "harness effect"],
+      "targetUrl": "https://apivale.com/blog/gemini-4-neon-api-pricing-benchmarks-guide/",
+      "author": "Elena Rostova @ APIVALE",
+      "email": "elena.rostova@apivale.com",
+      "role": "Lead AI Performance Engineer, APIVALE"
+    },
+    {
+      "topic": "Gemini 4 Neon vs Carbon 定价、编程基准评测与网关路由指南",
+      "keywords": ["gemini 4 neon vs carbon", "neon vs carbon", "gemini 4 carbon vs neon", "gemini 4 benchmarks", "neon 61 vs carbon 60", "carbon vs neon"],
+      "targetUrl": "https://apivale.com/blog/gemini-4-neon-vs-carbon-pricing-benchmarks-guide/",
+      "author": "Sofia Costa @ APIVALE",
+      "email": "sofia.costa@apivale.com",
+      "role": "Senior Machine Learning Operations Lead, APIVALE"
+    },
+    {
+      "topic": "Gemini 4 Neon vs Claude Opus 5.5 编程基准评测、定价与路由指南",
+      "keywords": ["gemini 4 neon vs claude opus 5.5", "neon vs opus 5.5", "claude opus 5.5 vs gemini 4 neon", "cursorbench 4.1", "opus 5.5 benchmarks", "gemini neon coding"],
+      "targetUrl": "https://apivale.com/blog/gemini-4-neon-vs-claude-opus-5-5-pricing-benchmarks-guide/",
+      "author": "Elena Rostova @ APIVALE",
+      "email": "elena.rostova@apivale.com",
+      "role": "Lead AI Performance Engineer, APIVALE"
     }
   ]
 }
-
