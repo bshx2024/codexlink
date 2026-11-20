@@ -1,0 +1,27 @@
+services:
+  comlinkai:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: comlinkai-cloud-engine
+    restart: always
+    ports:
+      - "3010:3010"   # ComLinkAI REST & WebSocket Bridge 服务接口
+      - "6080:6080"   # noVNC Web 可视化远程桌面 (浏览器访问 http://<VPS_IP>:6080/vnc.html)
+      - "5900:5900"   # 原生 VNC 接口 (可选)
+    environment:
+      - DISPLAY=:99
+      - SCREEN_WIDTH=1920
+      - SCREEN_HEIGHT=1080
+      - SCREEN_DEPTH=24
+      - TZ=Asia/Shanghai
+    volumes:
+      - ./APIVALE_Outreach_Hub:/app/APIVALE_Outreach_Hub
+      - ./logs:/app/logs
+      - ./artifacts:/app/artifacts
+    shm_size: '2gb'   # 保证 Chromium 在高并发或多标签页下共享内存充足，避免崩溃
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
