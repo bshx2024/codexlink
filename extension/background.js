@@ -328,8 +328,62 @@ async function updateAutoPilotGroupStatus(statusText, color = 'cyan') {
   }
 }
 
+// --------------------------------------------------------------------------
+// 3.1 Per-Tab 看门狗 (45 秒硬超时) 与标签页生命周期回收
+// --------------------------------------------------------------------------
+const tabWatchdogs = new Map();
+const TAB_WATCHDOG_TIMEOUT_MS = 45000; // 45 秒硬超时看门狗
+
+function registerTabWatchdog(tabId) {
+  clearTabWatchdog(tabId);
+  const timer = setTimeout(async () => {
+    console.warn(`[ComLinkAI Watchdog] ⚠️ 标签页 #${tabId} 超过 45 秒未收到完成信号，触发硬超时自动回收！`);
+    try {
+      if (attachedTabs.has(tabId)) {
+        await detachCDP(tabId);
+      }
+      await chrome.tabs.remove(tabId);
+    } catch (e) {
+    } finally {
+      tabWatchdogs.delete(tabId);
+    }
+  }, TAB_WATCHDOG_TIMEOUT_MS);
+
+  tabWatchdogs.set(tabId, {
+    timer,
+    createdAt: Date.now(),
+    lastActiveAt: Date.now()
+  });
+}
+
+function refreshTabWatchdog(tabId) {
+  if (tabId && tabWatchdogs.has(tabId)) {
+    const entry = tabWatchdogs.get(tabId);
+    clearTimeout(entry.timer);
+    entry.lastActiveAt = Date.now();
+    entry.timer = setTimeout(async () => {
+      console.warn(`[ComLinkAI Watchdog] ⚠️ 标签页 #${tabId} 超过 45 秒无新操作信号，触发硬超时自动回收！`);
+      try {
+        if (attachedTabs.has(tabId)) {
+          await detachCDP(tabId);
+        }
+        await chrome.tabs.remove(tabId);
+      } catch (e) {}
+      tabWatchdogs.delete(tabId);
+    }, TAB_WATCHDOG_TIMEOUT_MS);
+  }
+}
+
+function clearTabWatchdog(tabId) {
+  if (tabId && tabWatchdogs.has(tabId)) {
+    clearTimeout(tabWatchdogs.get(tabId).timer);
+    tabWatchdogs.delete(tabId);
+  }
+}
+
 // 标签被关闭时的自愈保护与清理
 chrome.tabs.onRemoved.addListener((closedTabId) => {
+  clearTabWatchdog(closedTabId);
   if (attachedTabs.has(closedTabId)) {
     attachedTabs.delete(closedTabId);
   }
@@ -572,3 +626,451 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 });
+
+// --------------------------------------------------------------------------
+// 5. 辅助函数：TabId 智能解析与页面加载等待 (无侵入、不抢焦点)
+// --------------------------------------------------------------------------
+async function resolveTabId(providedTabId) {
+  if (providedTabId !== undefined && providedTabId !== null) {
+    const num = typeof providedTabId === 'string' ? parseInt(providedTabId, 10) : providedTabId;
+    if (!isNaN(num)) {
+      return num;
+    }
+  }
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (tab && tab.id) {
+    return tab.id;
+  }
+  throw new Error('未提供有效 tabId 且当前无活跃标签页');
+}
+
+function waitForTabLoaded(tabId, timeoutMs = 25000) {
+  return new Promise((resolve) => {
+    let finished = false;
+    const start = Date.now();
+
+    const cleanup = () => {
+      finished = true;
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(listener);
+    };
+
+    const timer = setTimeout(() => {
+      if (!finished) {
+        cleanup();
+        resolve({ loaded: false, timeout: true, elapsed: Date.now() - start });
+      }
+    }, timeoutMs);
+
+    const listener = (updatedTabId, changeInfo) => {
+      if (updatedTabId === tabId && changeInfo.status === 'complete') {
+        if (!finished) {
+          const elapsed = Date.now() - start;
+          cleanup();
+          resolve({ loaded: true, timeout: false, elapsed });
+        }
+      }
+    };
+
+    chrome.tabs.onUpdated.addListener(listener);
+
+    chrome.tabs.get(tabId).then(t => {
+      if (t && t.status === 'complete' && !finished) {
+        const elapsed = Date.now() - start;
+        cleanup();
+        resolve({ loaded: true, timeout: false, elapsed });
+      }
+    }).catch(() => {});
+  });
+}
+
+// --------------------------------------------------------------------------
+// 6. 统一底层标签页独立动作处理器 (彻底解耦全局 Active Tab，支持纯后台运行)
+// --------------------------------------------------------------------------
+async function handleBackgroundAction(action, data = {}) {
+  // 6.0 唤起/打开 ComLinkAI 侧边栏界面
+  if (action === 'open_sidepanel') {
+    let sidepanelOpened = false;
+    let targetWindowId = null;
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab) targetWindowId = tab.windowId;
+      if (targetWindowId && chrome.sidePanel && chrome.sidePanel.open) {
+        await chrome.sidePanel.open({ windowId: targetWindowId });
+        sidepanelOpened = true;
+      }
+    } catch (e) {
+      console.warn('[ComLinkAI] chrome.sidePanel.open 需要用户手势，降级以全功能页面打开:', e.message);
+    }
+
+    if (!sidepanelOpened) {
+      const sidepanelUrl = chrome.runtime.getURL('sidepanel.html');
+      const newTab = await chrome.tabs.create({ url: sidepanelUrl, active: true });
+      return { success: true, mode: 'tab', tabId: newTab.id, url: sidepanelUrl };
+    }
+    return { success: true, mode: 'native_sidepanel', windowId: targetWindowId };
+  }
+
+  // 6.1 静默创建后台隔离标签页 (active: false)
+  if (action === 'create_tab') {
+    const { url = 'about:blank' } = data;
+    const newTab = await chrome.tabs.create({ url, active: false });
+    registerTabWatchdog(newTab.id);
+    console.log(`[ComLinkAI Background] 静默创建后台隔离标签页 #${newTab.id} (URL: ${url})`);
+    return { success: true, tabId: newTab.id };
+  }
+
+  // 6.2 安全销毁指定标签页
+  if (action === 'close_tab') {
+    const targetTabId = data.tabId;
+    if (!targetTabId) throw new Error('缺少 tabId 参数');
+    clearTabWatchdog(targetTabId);
+    if (attachedTabs.has(targetTabId)) {
+      await detachCDP(targetTabId).catch(() => {});
+    }
+    await chrome.tabs.remove(targetTabId).catch(() => {});
+    console.log(`[ComLinkAI Background] 已安全销毁标签页 #${targetTabId}`);
+    return { success: true, tabId: targetTabId };
+  }
+
+  // 6.3 页面导航 (若提供 tabId 则坚决不切前台，保持后台运行)
+  if (action === 'navigate') {
+    const { url, tabId } = data;
+    if (!url) throw new Error('缺少 url 参数');
+    if (tabId) {
+      refreshTabWatchdog(tabId);
+      await chrome.tabs.update(tabId, { url });
+      const loadRes = await waitForTabLoaded(tabId, data.timeout || 25000);
+      return { success: true, tabId, url, ...loadRes };
+    } else {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab && tab.id) {
+        await chrome.tabs.update(tab.id, { url });
+        const loadRes = await waitForTabLoaded(tab.id, data.timeout || 25000);
+        return { success: true, tabId: tab.id, url, ...loadRes };
+      } else {
+        const newTab = await chrome.tabs.create({ url, active: true });
+        const loadRes = await waitForTabLoaded(newTab.id, data.timeout || 25000);
+        return { success: true, tabId: newTab.id, url, ...loadRes };
+      }
+    }
+  }
+
+  // 6.4 模拟真实点击 (支持指定 tabId，优先 CDP 物理轨迹，降级 DOM 点击)
+  if (action === 'click') {
+    const targetTabId = await resolveTabId(data.tabId);
+    refreshTabWatchdog(targetTabId);
+    const { selector } = data;
+    if (!selector) throw new Error('缺少 selector 参数');
+
+    let clickSuccess = false;
+    try {
+      const [{ result: coords }] = await chrome.scripting.executeScript({
+        target: { tabId: targetTabId },
+        func: (sel) => {
+          const el = document.querySelector(sel);
+          if (!el) return null;
+          el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          const rect = el.getBoundingClientRect();
+          return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+        },
+        args: [selector]
+      });
+      if (coords) {
+        const cdpRes = await cdpPhysicalClick(targetTabId, coords.x, coords.y);
+        if (cdpRes && cdpRes.success) clickSuccess = true;
+      }
+    } catch (e) {}
+
+    if (!clickSuccess) {
+      await chrome.scripting.executeScript({
+        target: { tabId: targetTabId },
+        func: (sel) => {
+          const el = document.querySelector(sel);
+          if (!el) throw new Error('未找到元素: ' + sel);
+          el.click();
+          return true;
+        },
+        args: [selector]
+      });
+    }
+    return { success: true, tabId: targetTabId };
+  }
+
+  // 6.5 模拟真实输入 (支持指定 tabId，优先 CDP 原生物理击键，降级原生 Event 触发)
+  if (action === 'type') {
+    const targetTabId = await resolveTabId(data.tabId);
+    refreshTabWatchdog(targetTabId);
+    const { selector, text, humanLike = true } = data;
+    if (!selector) throw new Error('缺少 selector 参数');
+
+    await chrome.scripting.executeScript({
+      target: { tabId: targetTabId },
+      func: (sel) => {
+        const el = document.querySelector(sel);
+        if (!el) throw new Error('未找到输入框: ' + sel);
+        el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        el.focus();
+      },
+      args: [selector]
+    });
+
+    let typedByCdp = false;
+    if (humanLike) {
+      try {
+        await cdpPhysicalType(targetTabId, text || '');
+        typedByCdp = true;
+      } catch (e) {}
+    }
+
+    if (!typedByCdp) {
+      await chrome.scripting.executeScript({
+        target: { tabId: targetTabId },
+        func: (sel, val) => {
+          const el = document.querySelector(sel);
+          if (!el) throw new Error('未找到输入框: ' + sel);
+          el.focus();
+          el.value = val;
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          el.dispatchEvent(new Event('blur', { bubbles: true }));
+        },
+        args: [selector, text || '']
+      });
+    }
+    return { success: true, tabId: targetTabId, isCdp: typedByCdp };
+  }
+
+  // 6.6 CDP 原生硬件加速截屏 (原生支持后台 Tab，免去前台激活)
+  if (action === 'screenshot') {
+    const targetTabId = await resolveTabId(data.tabId);
+    refreshTabWatchdog(targetTabId);
+    try {
+      const shotResult = await cdpCaptureScaledScreenshot(targetTabId, data.options || { quality: 80, scale: 0.8 });
+      return { dataUrl: shotResult.dataUrl, width: shotResult.width, height: shotResult.height, isNativeCdp: true, tabId: targetTabId };
+    } catch (e) {
+      return new Promise((resolve, reject) => {
+        chrome.tabs.captureVisibleTab(null, { format: 'jpeg', quality: 80 }, (dataUrl) => {
+          if (chrome.runtime.lastError || !dataUrl) {
+            return reject(new Error(chrome.runtime.lastError ? chrome.runtime.lastError.message : '截图返回为空'));
+          }
+          resolve({ dataUrl, tabId: targetTabId });
+        });
+      });
+    }
+  }
+
+  // 6.7 提取页面交互元素 (在指定后台 Tab 中执行)
+  if (action === 'getElements') {
+    const targetTabId = await resolveTabId(data.tabId);
+    refreshTabWatchdog(targetTabId);
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: targetTabId },
+      func: () => {
+        const items = Array.from(document.querySelectorAll('button, a, input, textarea, select'));
+        return items.filter(el => el.offsetHeight > 0 && el.offsetWidth > 0).slice(0, 80).map(el => ({
+          tag: el.tagName.toLowerCase(),
+          id: el.id || null,
+          name: el.name || null,
+          text: (el.innerText || el.value || el.placeholder || '').trim().slice(0, 60),
+          selector: el.id ? `#${el.id}` : (el.name ? `${el.tagName.toLowerCase()}[name="${el.name}"]` : null)
+        }));
+      }
+    });
+    return results && results[0] ? results[0].result : [];
+  }
+
+  // 6.8 模拟物理滚动
+  if (action === 'scroll') {
+    const targetTabId = await resolveTabId(data.tabId);
+    refreshTabWatchdog(targetTabId);
+    const { direction, amount = 400 } = data;
+    const deltaY = direction === 'up' ? -amount : amount;
+    try {
+      await cdpPhysicalScroll(targetTabId, deltaY);
+    } catch (e) {
+      await chrome.scripting.executeScript({
+        target: { tabId: targetTabId },
+        func: (dy) => { window.scrollBy({ top: dy, behavior: 'smooth' }); },
+        args: [deltaY]
+      });
+    }
+    return { success: true, tabId: targetTabId };
+  }
+
+  // 6.9 键盘按键模拟
+  if (action === 'keypress') {
+    const targetTabId = await resolveTabId(data.tabId);
+    refreshTabWatchdog(targetTabId);
+    const { key, selector } = data;
+    await chrome.scripting.executeScript({
+      target: { tabId: targetTabId },
+      func: (k, sel) => {
+        const target = sel ? document.querySelector(sel) : document.activeElement || document.body;
+        if (!target) throw new Error('未找到按键目标元素');
+        target.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
+        target.dispatchEvent(new KeyboardEvent('keyup', { key: k, bubbles: true }));
+      },
+      args: [key, selector || null]
+    });
+    return { success: true, tabId: targetTabId };
+  }
+
+  // 6.10 等待特定元素出现
+  if (action === 'waitForElement') {
+    const targetTabId = await resolveTabId(data.tabId);
+    refreshTabWatchdog(targetTabId);
+    const { selector, timeout = 10000 } = data;
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+      const res = await chrome.scripting.executeScript({
+        target: { tabId: targetTabId },
+        func: (sel) => !!document.querySelector(sel),
+        args: [selector]
+      });
+      if (res && res[0] && res[0].result) {
+        return { success: true, found: true, elapsed: Date.now() - start, tabId: targetTabId };
+      }
+      await new Promise(r => setTimeout(r, 400));
+    }
+    throw new Error(`等待元素 [${selector}] 超时 (${timeout}ms)`);
+  }
+
+  // 6.11 等待页面加载完成
+  if (action === 'waitForLoad') {
+    const targetTabId = await resolveTabId(data.tabId);
+    refreshTabWatchdog(targetTabId);
+    const res = await waitForTabLoaded(targetTabId, data.timeout || 15000);
+    return { success: true, tabId: targetTabId, ...res };
+  }
+
+  // 6.12 提取页面正文 Markdown 内容
+  if (action === 'getActiveTab' || action === 'getTabContent') {
+    const targetTabId = await resolveTabId(data.tabId);
+    refreshTabWatchdog(targetTabId);
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: targetTabId },
+      func: () => ({
+        title: document.title,
+        url: window.location.href,
+        content: document.body ? document.body.innerText : ''
+      })
+    });
+    return results && results[0] ? results[0].result : { title: '', url: '', content: '' };
+  }
+
+  // 6.13 列出所有标签页
+  if (action === 'listTabs') {
+    const tabs = await chrome.tabs.query({});
+    return tabs.map(t => ({ id: t.id, title: t.title, url: t.url, groupId: t.groupId, active: t.active }));
+  }
+
+  // 6.14 内存自愈与全局上下文清理
+  if (action === 'cleanup_context') {
+    let closedCount = 0;
+    for (const [tId] of tabWatchdogs) {
+      try {
+        if (attachedTabs.has(tId)) await detachCDP(tId).catch(() => {});
+        await chrome.tabs.remove(tId);
+        closedCount++;
+      } catch (e) {}
+    }
+    tabWatchdogs.clear();
+    console.log(`[ComLinkAI Background] 上下文清理完成，共回收 ${closedCount} 个后台任务标签页。`);
+    return { success: true, closedCount };
+  }
+
+  // 6.15 重载扩展自身 (读取磁盘最新 manifest 与代码)
+  if (action === 'reload_extension') {
+    console.log('[ComLinkAI Background] 收到重载指令，正在执行 chrome.runtime.reload()...');
+    setTimeout(() => {
+      chrome.runtime.reload();
+    }, 100);
+    return { success: true, message: 'Extension reloading triggered' };
+  }
+
+  throw new Error(`[Background] 未知操作指令: ${action}`);
+}
+
+// --------------------------------------------------------------------------
+// 7. Service Worker 通信长连接下沉 (独立于 Sidepanel，支持 7x24h 纯后台自动化)
+// --------------------------------------------------------------------------
+const SERVER_URLS = ['ws://127.0.0.1:3010', 'ws://localhost:3010'];
+let bgWs = null;
+let bgCandidateIdx = 0;
+let bgReconnectTimer = null;
+let bgHeartbeatTimer = null;
+
+function connectBridgeWebSocket() {
+  if (bgWs && (bgWs.readyState === WebSocket.OPEN || bgWs.readyState === WebSocket.CONNECTING)) {
+    return;
+  }
+  const url = SERVER_URLS[bgCandidateIdx % SERVER_URLS.length];
+  try {
+    bgWs = new WebSocket(url);
+
+    bgWs.onopen = () => {
+      console.log(`[ComLinkAI Background] 成功连接至本地 Bridge 服务: ${url}`);
+      bgWs.send(JSON.stringify({ type: 'hello', role: 'background' }));
+      if (bgReconnectTimer) {
+        clearInterval(bgReconnectTimer);
+        bgReconnectTimer = null;
+      }
+      if (bgHeartbeatTimer) clearInterval(bgHeartbeatTimer);
+      // 10s 心跳保活，防止 MV3 Service Worker 意外休眠
+      bgHeartbeatTimer = setInterval(() => {
+        if (bgWs && bgWs.readyState === WebSocket.OPEN) {
+          bgWs.send(JSON.stringify({ type: 'ping' }));
+        }
+      }, 10000);
+    };
+
+    bgWs.onmessage = async (event) => {
+      try {
+        const payload = JSON.parse(event.data);
+        const { id, action, data, tabId, sessionId } = payload;
+        if (!action) return;
+
+        const mergedData = { ...(data || {}) };
+        if (tabId !== undefined && mergedData.tabId === undefined) mergedData.tabId = tabId;
+        if (sessionId !== undefined && mergedData.sessionId === undefined) mergedData.sessionId = sessionId;
+
+        try {
+          const res = await handleBackgroundAction(action, mergedData);
+          bgWs.send(JSON.stringify({ id, type: 'response', data: res }));
+        } catch (actErr) {
+          bgWs.send(JSON.stringify({ id, type: 'response', error: actErr.message }));
+        }
+      } catch (err) {
+        console.error('[ComLinkAI Background] 处理 Bridge 消息异常:', err);
+      }
+    };
+
+    bgWs.onclose = () => {
+      if (bgHeartbeatTimer) clearInterval(bgHeartbeatTimer);
+      startBgReconnect();
+    };
+
+    bgWs.onerror = () => {
+      if (bgHeartbeatTimer) clearInterval(bgHeartbeatTimer);
+      startBgReconnect();
+    };
+  } catch (e) {
+    startBgReconnect();
+  }
+}
+
+function startBgReconnect() {
+  if (bgReconnectTimer) return;
+  bgReconnectTimer = setInterval(() => {
+    if (!bgWs || bgWs.readyState === WebSocket.CLOSED) {
+      bgCandidateIdx++;
+      connectBridgeWebSocket();
+    }
+  }, 4000);
+}
+
+// 扩展初始化即刻启动后台连接
+try {
+  connectBridgeWebSocket();
+} catch (e) {}

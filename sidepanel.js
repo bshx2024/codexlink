@@ -1,5 +1,5 @@
 // ==========================================================================
-// ComLinkAI Pro v2.2.0 - 核心侧边栏控制引擎 (Pristine Clean Build)
+// ComLinkAI Pro v2.3.0 - 核心侧边栏控制引擎 (L4 并发隔离与无人值守版)
 // ==========================================================================
 
 const SERVER_CANDIDATES = [
@@ -144,7 +144,7 @@ async function updateActiveTabInfo() {
         const u = new URL(tab.url);
         const q = u.searchParams.get('q');
         if (q) inputTargetDomain.value = q;
-      } catch (e) {}
+      } catch (e) { }
     }
   } catch (err) {
     console.warn('[updateActiveTabInfo Error]:', err);
@@ -155,13 +155,13 @@ async function updateActiveTabInfo() {
 if (typeof chrome !== 'undefined' && chrome.tabs) {
   if (chrome.tabs.onActivated) {
     chrome.tabs.onActivated.addListener(() => {
-      try { updateActiveTabInfo(); } catch (e) {}
+      try { updateActiveTabInfo(); } catch (e) { }
     });
   }
   if (chrome.tabs.onUpdated) {
     chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
       if (changeInfo.status === 'complete' || changeInfo.url) {
-        try { updateActiveTabInfo(); } catch (e) {}
+        try { updateActiveTabInfo(); } catch (e) { }
       }
     });
   }
@@ -171,7 +171,7 @@ if (typeof chrome !== 'undefined' && chrome.tabs) {
 // 1. 初始化入口 & WebSocket 连接管理
 // ==========================================
 function initApp() {
-  try { updateActiveTabInfo(); } catch (e) {}
+  try { updateActiveTabInfo(); } catch (e) { }
 
   opMode = 'ws_bridge';
   localStorage.setItem('op_mode', 'ws_bridge');
@@ -187,8 +187,8 @@ function initApp() {
     });
   }
 
-  try { connectWebSocket(); } catch (e) {}
-  try { startHttpPollingLoop(); } catch (e) {}
+  try { connectWebSocket(); } catch (e) { }
+  try { startHttpPollingLoop(); } catch (e) { }
 
   const btnRefresh = document.getElementById('btn-refresh');
   if (btnRefresh) {
@@ -240,6 +240,9 @@ function connectWebSocket() {
         reconnectTimer = null;
       }
       updateUIStatus('connected', candidate);
+      try {
+        ws.send(JSON.stringify({ type: 'hello', role: 'sidepanel' }));
+      } catch (e) {}
 
       if (pingTimer) clearInterval(pingTimer);
       pingTimer = setInterval(() => {
@@ -332,7 +335,33 @@ function updateUIStatus(status, detailText = '') {
 // 统一分发来自 AI Agent (MCP/WebSocket/REST) 的浏览器操控指令
 // --------------------------------------------------------------------------
 async function handleRemoteAgentAction(action, data = {}) {
+  // 静默创建后台隔离标签页
+  if (action === 'create_tab') {
+    const { url = 'about:blank' } = data;
+    const newTab = await chrome.tabs.create({ url, active: false });
+    return { success: true, tabId: newTab.id };
+  }
+
+  // 安全销毁指定标签页
+  if (action === 'close_tab') {
+    const tabId = data.tabId;
+    if (!tabId) throw new Error('缺少 tabId 参数');
+    await chrome.tabs.remove(tabId).catch(() => {});
+    return { success: true, tabId };
+  }
+
   if (action === 'getActiveTab') {
+    if (data.tabId) {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId: data.tabId },
+        func: () => ({
+          title: document.title,
+          url: window.location.href,
+          content: document.body ? document.body.innerText : ''
+        })
+      });
+      return results && results[0] ? results[0].result : { title: '', url: '', content: '' };
+    }
     const tabData = await fetchActiveTabContent();
     currentExtractedContent = tabData;
     renderMarkdownPreview(tabData);
@@ -340,61 +369,275 @@ async function handleRemoteAgentAction(action, data = {}) {
   }
 
   if (action === 'navigate') {
-    const { url } = data;
+    const { url, tabId } = data;
     if (!url) throw new Error('缺少 url 参数');
+    // 若显式携带 tabId，坚决不切前台，直接后台更新
+    if (tabId) {
+      await chrome.tabs.update(tabId, { url });
+      return { success: true, tabId, url };
+    }
     await openAndFocusUrl(url);
     return { success: true };
   }
 
   if (action === 'click') {
-    const { selector } = data;
+    const { selector, tabId } = data;
     if (!selector) throw new Error('缺少 selector 参数');
+    let targetTabId = tabId;
+    if (!targetTabId) {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab) targetTabId = tab.id;
+    }
+    if (!targetTabId) throw new Error('未找到可用目标标签页');
+
     let clickSuccess = false;
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tab) {
-        const [{ result: coords }] = await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          func: (sel) => {
-            const el = document.querySelector(sel);
-            if (!el) return null;
-            el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-            const rect = el.getBoundingClientRect();
-            return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
-          },
-          args: [selector]
-        });
-        if (coords) {
-          const res = await chrome.runtime.sendMessage({ type: 'CDP_PHYSICAL_CLICK', tabId: tab.id, x: coords.x, y: coords.y });
-          if (res && res.success) clickSuccess = true;
-        }
+      const [{ result: coords }] = await chrome.scripting.executeScript({
+        target: { tabId: targetTabId },
+        func: (sel) => {
+          const el = document.querySelector(sel);
+          if (!el) return null;
+          el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          const rect = el.getBoundingClientRect();
+          return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+        },
+        args: [selector]
+      });
+      if (coords) {
+        const res = await chrome.runtime.sendMessage({ type: 'CDP_PHYSICAL_CLICK', tabId: targetTabId, x: coords.x, y: coords.y });
+        if (res && res.success) clickSuccess = true;
       }
-    } catch (e) {}
+    } catch (e) { }
 
     if (!clickSuccess) {
-      await executeInActiveTab((sel) => {
+      await executeInTab(targetTabId, (sel) => {
         const el = document.querySelector(sel);
         if (!el) throw new Error('未找到元素: ' + sel);
         el.click();
         return true;
       }, [selector]);
     }
-    return { success: true };
+    return { success: true, tabId: targetTabId };
   }
 
   if (action === 'type') {
-    const { selector, text } = data;
+    const { selector, text, humanLike = true, tabId } = data;
     if (!selector) throw new Error('缺少 selector 参数');
-    await executeInActiveTab((sel, val) => {
+
+    let targetTabId = tabId;
+    if (!targetTabId) {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab) targetTabId = tab.id;
+    }
+    if (!targetTabId) throw new Error('未找到可用目标标签页。');
+
+    await executeInTab(targetTabId, (sel) => {
       const el = document.querySelector(sel);
       if (!el) throw new Error('未找到输入框: ' + sel);
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
       el.focus();
-      el.value = val;
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-      return true;
-    }, [selector, text || '']);
-    return { success: true };
+    }, [selector]);
+
+    let typedByCdp = false;
+    if (humanLike) {
+      try {
+        const cdpRes = await chrome.runtime.sendMessage({
+          type: 'CDP_PHYSICAL_TYPE',
+          tabId: targetTabId,
+          text: text || ''
+        });
+        if (cdpRes && cdpRes.success) typedByCdp = true;
+      } catch (e) { }
+    }
+
+    if (!typedByCdp) {
+      await executeInTab(targetTabId, async (sel, val, isHuman) => {
+        const el = document.querySelector(sel);
+        if (!el) throw new Error('未找到输入框: ' + sel);
+        el.focus();
+
+        if (!isHuman || val.length === 0) {
+          el.value = val;
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          return true;
+        }
+
+        // 拟人化键盘输入流模拟：短文本逐字输入，长文本分块输入 + 抖动微延迟
+        el.value = '';
+        if (val.length <= 80) {
+          for (let i = 0; i < val.length; i++) {
+            const char = val[i];
+            el.dispatchEvent(new KeyboardEvent('keydown', { key: char, bubbles: true }));
+            el.dispatchEvent(new KeyboardEvent('keypress', { key: char, bubbles: true }));
+            el.value += char;
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new KeyboardEvent('keyup', { key: char, bubbles: true }));
+            const jitter = Math.floor(Math.random() * 25 + 20); // 20-45ms
+            await new Promise(r => setTimeout(r, jitter));
+          }
+        } else {
+          const chunkSize = Math.max(15, Math.floor(val.length / 10));
+          let curr = 0;
+          while (curr < val.length) {
+            const chunk = val.slice(curr, curr + chunkSize);
+            el.value += chunk;
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            curr += chunkSize;
+            const pause = Math.floor(Math.random() * 50 + 35); // 35-85ms
+            await new Promise(r => setTimeout(r, pause));
+          }
+        }
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        el.dispatchEvent(new Event('blur', { bubbles: true }));
+        return true;
+      }, [selector, text || '', humanLike]);
+    }
+    return { success: true, isCdp: typedByCdp };
+  }
+
+  if (action === 'human_fill_comment') {
+    const { comment, author, email, url, autoSubmit = false } = data;
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab) throw new Error('未找到活跃标签页。');
+
+    // 1. 平滑缓动滚动至评论区
+    try {
+      await executeHumanScrollInTab(tab.id);
+      await new Promise(r => setTimeout(r, 1200));
+    } catch (e) { }
+
+    // 2. 依次拟人化输入各字段并记录步进停顿
+    const startTime = Date.now();
+    const filledFields = [];
+
+    // 2.1 评论正文
+    if (comment) {
+      await executeInActiveTab(async (val) => {
+        const commentEl = document.querySelector('textarea[name*="comment" i], textarea[id*="comment" i], textarea[placeholder*="comment" i], textarea[placeholder*="评论" i], textarea[placeholder*="留言" i], textarea[placeholder*="reply" i], textarea');
+        if (!commentEl) return false;
+        commentEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        commentEl.focus();
+        commentEl.value = '';
+        const chunkSize = Math.max(15, Math.floor(val.length / 10));
+        let curr = 0;
+        while (curr < val.length) {
+          const chunk = val.slice(curr, curr + chunkSize);
+          commentEl.value += chunk;
+          commentEl.dispatchEvent(new Event('input', { bubbles: true }));
+          curr += chunkSize;
+          await new Promise(r => setTimeout(r, Math.floor(Math.random() * 40 + 30)));
+        }
+        commentEl.dispatchEvent(new Event('change', { bubbles: true }));
+        commentEl.style.border = '2px solid #10b981';
+        return true;
+      }, [comment]);
+      filledFields.push('评论正文');
+      await new Promise(r => setTimeout(r, Math.floor(Math.random() * 300 + 500))); // 500-800ms 停顿
+    }
+
+    // 2.2 姓名
+    if (author) {
+      await executeInActiveTab(async (val) => {
+        const nameEl = document.querySelector('input[placeholder*="昵称" i], input[placeholder*="姓名" i], input[placeholder*="Name" i], input[placeholder*="Author" i], input[name*="author" i], input[name*="name" i], input[id*="author" i], input[id*="name" i], #author');
+        if (!nameEl) return false;
+        nameEl.focus();
+        nameEl.value = '';
+        for (let i = 0; i < val.length; i++) {
+          nameEl.value += val[i];
+          nameEl.dispatchEvent(new Event('input', { bubbles: true }));
+          await new Promise(r => setTimeout(r, Math.floor(Math.random() * 25 + 20)));
+        }
+        nameEl.dispatchEvent(new Event('change', { bubbles: true }));
+        nameEl.style.border = '2px solid #10b981';
+        return true;
+      }, [author]);
+      filledFields.push('姓名');
+      await new Promise(r => setTimeout(r, Math.floor(Math.random() * 200 + 400))); // 400-600ms 停顿
+    }
+
+    // 2.3 邮箱
+    if (email) {
+      await executeInActiveTab(async (val) => {
+        const emailEl = document.querySelector('input[placeholder*="邮箱" i], input[placeholder*="Email" i], input[placeholder*="Mail" i], input[type="email"], input[name*="email" i], input[id*="email" i], #email');
+        if (!emailEl) return false;
+        emailEl.focus();
+        emailEl.value = '';
+        for (let i = 0; i < val.length; i++) {
+          emailEl.value += val[i];
+          emailEl.dispatchEvent(new Event('input', { bubbles: true }));
+          await new Promise(r => setTimeout(r, Math.floor(Math.random() * 25 + 20)));
+        }
+        emailEl.dispatchEvent(new Event('change', { bubbles: true }));
+        emailEl.style.border = '2px solid #10b981';
+        return true;
+      }, [email]);
+      filledFields.push('邮箱');
+      await new Promise(r => setTimeout(r, Math.floor(Math.random() * 200 + 400))); // 400-600ms 停顿
+    }
+
+    // 2.4 网站
+    if (url) {
+      await executeInActiveTab(async (val) => {
+        const urlEl = document.querySelector('input[placeholder*="网址" i], input[placeholder*="网站" i], input[placeholder*="URL" i], input[placeholder*="Website" i], input[type="url"], input[name*="url" i], input[name*="website" i], input[id*="url" i], input[id*="website" i], #url');
+        if (!urlEl) return false;
+        urlEl.focus();
+        urlEl.value = '';
+        for (let i = 0; i < val.length; i++) {
+          urlEl.value += val[i];
+          urlEl.dispatchEvent(new Event('input', { bubbles: true }));
+          await new Promise(r => setTimeout(r, Math.floor(Math.random() * 20 + 15)));
+        }
+        urlEl.dispatchEvent(new Event('change', { bubbles: true }));
+        urlEl.style.border = '2px solid #10b981';
+        return true;
+      }, [url]);
+      filledFields.push('网址');
+      await new Promise(r => setTimeout(r, Math.floor(Math.random() * 400 + 800))); // 800-1200ms 检查停顿
+    }
+
+    // 2.5 自动勾选 Cookie
+    await executeInActiveTab(() => {
+      const consentEl = document.querySelector('#wp-comment-cookies-consent, input[name*="cookies-consent" i]');
+      if (consentEl && !consentEl.checked) {
+        consentEl.checked = true;
+        consentEl.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+
+    let submitted = false;
+    if (autoSubmit) {
+      // CDP 物理级提交点击
+      try {
+        const [{ result: coords }] = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: () => {
+            const btn = document.querySelector('#submit, button[type="submit"], input[type="submit"], button.submit, input[name="submit"]');
+            if (!btn) return null;
+            btn.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            const rect = btn.getBoundingClientRect();
+            return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+          }
+        });
+        if (coords) {
+          await new Promise(r => setTimeout(r, 400));
+          const clickRes = await chrome.runtime.sendMessage({ type: 'CDP_PHYSICAL_CLICK', tabId: tab.id, x: coords.x, y: coords.y });
+          if (clickRes && clickRes.success) submitted = true;
+        }
+      } catch (e) { }
+
+      if (!submitted) {
+        // DOM 点击降级
+        await executeInActiveTab(() => {
+          const btn = document.querySelector('#submit, button[type="submit"], input[type="submit"]');
+          if (btn) btn.click();
+        });
+        submitted = true;
+      }
+    }
+
+    const totalDurationMs = Date.now() - startTime;
+    return { success: true, filledFields, submitted, totalDurationMs };
   }
 
   if (action === 'scroll') {
@@ -409,16 +652,18 @@ async function handleRemoteAgentAction(action, data = {}) {
   }
 
   if (action === 'screenshot') {
+    const targetTabId = data.tabId;
     // 🌟 借助 CDP DevTools 协议原生硬件缩放截屏 (借鉴自 browser-hands)
     try {
       const res = await chrome.runtime.sendMessage({
         type: 'CDP_CAPTURE_SCREENSHOT',
+        tabId: targetTabId,
         options: { quality: 80, scale: 0.8 }
       });
       if (res && res.success && res.data) {
-        return { dataUrl: res.data.dataUrl, width: res.data.width, height: res.data.height, isNativeCdp: true };
+        return { dataUrl: res.data.dataUrl, width: res.data.width, height: res.data.height, isNativeCdp: true, tabId: targetTabId };
       }
-    } catch (e) {}
+    } catch (e) { }
 
     // 降级使用 captureVisibleTab
     return new Promise((resolve, reject) => {
@@ -426,13 +671,13 @@ async function handleRemoteAgentAction(action, data = {}) {
         if (chrome.runtime.lastError || !dataUrl) {
           return reject(new Error(chrome.runtime.lastError ? chrome.runtime.lastError.message : '截图返回为空'));
         }
-        resolve({ dataUrl });
+        resolve({ dataUrl, tabId: targetTabId });
       });
     });
   }
 
   if (action === 'getElements') {
-    return await executeInActiveTab(() => {
+    const fn = () => {
       const items = Array.from(document.querySelectorAll('button, a, input, textarea, select'));
       return items.filter(el => el.offsetHeight > 0 && el.offsetWidth > 0).slice(0, 80).map(el => ({
         tag: el.tagName.toLowerCase(),
@@ -441,7 +686,11 @@ async function handleRemoteAgentAction(action, data = {}) {
         text: (el.innerText || el.value || el.placeholder || '').trim().slice(0, 60),
         selector: el.id ? `#${el.id}` : (el.name ? `${el.tagName.toLowerCase()}[name="${el.name}"]` : null)
       }));
-    });
+    };
+    if (data.tabId) {
+      return await executeInTab(data.tabId, fn);
+    }
+    return await executeInActiveTab(fn);
   }
 
   if (action === 'listTabs') {
@@ -502,7 +751,7 @@ async function handleRemoteAgentAction(action, data = {}) {
     const currentUrl = tab.url || tabData.url || '';
     const title = tab.title || tabData.title || currentUrl;
     let hostName = '';
-    try { hostName = new URL(currentUrl).hostname; } catch (e) {}
+    try { hostName = new URL(currentUrl).hostname; } catch (e) { }
 
     // 1. 频控防骚扰检查 (24h)
     if (window.publishLogger && hostName) {
@@ -515,12 +764,23 @@ async function handleRemoteAgentAction(action, data = {}) {
       }
     }
 
-    // 2. 页面评论表单快速探测
+    // 2. 页面评论表单快速探测与视觉可见性检测 (拒绝 Ghost Form)
     const probeRes = await executeInTab(tab.id, () => {
       const text = (document.body ? document.body.innerText : '').toLowerCase();
       const isClosed = text.includes('comments are closed') || text.includes('评论已关闭') || text.includes('关闭了评论');
-      const hasForm = !!document.querySelector('textarea, form[action*="comment" i], #commentform, .comment-form, input[name*="comment" i]');
-      return { isClosed, hasForm, bodySnippet: text.slice(0, 3000) };
+      const formEl = document.querySelector('form[action*="comment" i], #commentform, .comment-form, textarea#comment');
+      const hasForm = !!formEl || !!document.querySelector('textarea, input[name*="comment" i]');
+
+      let isVisible = false;
+      if (formEl) {
+        const style = window.getComputedStyle(formEl);
+        const parentArea = formEl.closest('#comments, .comments-area, #respond');
+        const parentStyle = parentArea ? window.getComputedStyle(parentArea) : null;
+        const parentHidden = parentStyle && (parentStyle.display === 'none' || parentStyle.visibility === 'hidden');
+        isVisible = style.display !== 'none' && style.visibility !== 'hidden' && !parentHidden && (formEl.offsetHeight > 0 || (parentArea && parentArea.offsetHeight > 0));
+      }
+
+      return { isClosed, hasForm, isVisible, bodySnippet: text.slice(0, 3000) };
     });
 
     if (!probeRes || (!probeRes.hasForm && probeRes.isClosed)) {
@@ -529,6 +789,15 @@ async function handleRemoteAgentAction(action, data = {}) {
         success: false,
         skipped: true,
         reason: '当前页面评论已关闭或未找到评论输入表单'
+      };
+    }
+
+    if (probeRes.hasForm && !probeRes.isVisible) {
+      markCurrentTabAsDoneInQueue(currentUrl, true);
+      return {
+        success: false,
+        skipped: true,
+        reason: '当前页面评论表单被 CSS (如 display: none) 强制隐藏 (Ghost Form)，无法实现真实读者可见与白帽引流，已自动跳过。'
       };
     }
 
@@ -579,7 +848,7 @@ async function handleRemoteAgentAction(action, data = {}) {
     if (window.googleSheetsSync && logItem && window.googleSheetsSync.isConfigured()) {
       try {
         gsheetSyncResult = await window.googleSheetsSync.syncLogEntry(logItem);
-      } catch (e) {}
+      } catch (e) { }
     }
 
     return {
@@ -780,7 +1049,7 @@ function initBacklinkHelper() {
     if (!profile.url) {
       try {
         profile = JSON.parse(localStorage.getItem('comlinkai_profile') || '{}');
-      } catch (e) {}
+      } catch (e) { }
     }
 
     setVal('profile-name', profile.name);
@@ -857,7 +1126,7 @@ function initBacklinkHelper() {
           if (res && res.success && res.data && res.data.dataUrl) {
             shotDataUrl = res.data.dataUrl;
           }
-        } catch (cdpErr) {}
+        } catch (cdpErr) { }
 
         if (!shotDataUrl && typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.captureVisibleTab) {
           shotDataUrl = await new Promise((resolve) => {
@@ -937,7 +1206,7 @@ function initBacklinkHelper() {
     btnTemplateEn.addEventListener('click', () => {
       const currentUrl = (document.getElementById('profile-url') ? document.getElementById('profile-url').value.trim() : '') || 'https://apivale.com/';
       let domain = 'apivale.com';
-      try { domain = new URL(currentUrl.startsWith('http') ? currentUrl : 'https://' + currentUrl).hostname; } catch (e) {}
+      try { domain = new URL(currentUrl.startsWith('http') ? currentUrl : 'https://' + currentUrl).hostname; } catch (e) { }
 
       setVal('profile-name', 'APIVALE - Unified AI Model Gateway');
       setVal('profile-email', 'support@' + domain);
@@ -957,7 +1226,7 @@ function initBacklinkHelper() {
     btnTemplateZh.addEventListener('click', () => {
       const currentUrl = (document.getElementById('profile-url') ? document.getElementById('profile-url').value.trim() : '') || 'https://apivale.com/';
       setVal('profile-name', 'Alex @ APIVALE');
-      setVal('profile-email', 'support@apivale.com');
+      setVal('profile-email', 'alex.rivera@apivale.com');
       setVal('profile-url', currentUrl);
       setVal('profile-tagline', '一站式 AI 大模型 API 聚合与转接平台');
       setVal('profile-bio', '专注 AI 工具与大模型 API 网关的开发者平台');
@@ -1026,7 +1295,7 @@ function initBacklinkHelper() {
       try {
         const legacy = JSON.parse(localStorage.getItem('comlinkai_profile') || '{}');
         profile = Object.assign({}, legacy, { websiteUrl: legacy.url });
-      } catch (e) {}
+      } catch (e) { }
     }
 
     if (!profile.websiteUrl) {
@@ -1165,10 +1434,10 @@ async function detectAndFillDirectoryFormInTab(profile) {
             filledRich = true;
             break;
           }
-        } catch (e) {}
+        } catch (e) { }
       }
     }
-  } catch (e) {}
+  } catch (e) { }
 
   if (filledRich) {
     filledFields.push('详细介绍 (富文本)');
@@ -1200,7 +1469,7 @@ async function detectAndFillDirectoryFormInTab(profile) {
         filledFields.push('分类选择');
       }
     });
-  } catch (e) {}
+  } catch (e) { }
 
   // 6. 分类标签 (Tags)
   const tagEl = document.querySelector('input[placeholder*="标签" i], input[placeholder*="Tag" i], input[placeholder*="关键词" i], input[placeholder*="keyword" i], input[name*="tag" i], input[name*="keyword" i], input[name*="tags" i]');
@@ -1299,11 +1568,11 @@ async function detectAndFillDirectoryFormInTab(profile) {
     try {
       captchaInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
       captchaInput.focus({ preventScroll: true });
-    } catch (e) {}
+    } catch (e) { }
   } else {
     const submitBtn = document.querySelector('button[type="submit"], input[type="submit"], button.submit, .btn-submit, button');
     if (submitBtn) {
-      try { submitBtn.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
+      try { submitBtn.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) { }
     }
   }
 
@@ -1358,11 +1627,11 @@ function getNextRotatedPersona(currentName = '') {
   let idx = 0;
   try {
     idx = parseInt(localStorage.getItem('comlinkai_persona_idx') || '0', 10);
-  } catch (e) {}
+  } catch (e) { }
   const nextPersona = PERSONA_POOL[idx % PERSONA_POOL.length];
   try {
     localStorage.setItem('comlinkai_persona_idx', String((idx + 1) % PERSONA_POOL.length));
-  } catch (e) {}
+  } catch (e) { }
   return nextPersona;
 }
 
@@ -1393,7 +1662,7 @@ function getActiveUserProfile() {
         profileName: legacy.name,
         profileEmail: legacy.email
       });
-    } catch (e) {}
+    } catch (e) { }
   }
   return profile;
 }
@@ -1475,7 +1744,7 @@ function parseAndCleanBacklinkRows(rows) {
     if (!rawUrl || typeof rawUrl !== 'string' || !rawUrl.startsWith('http')) continue;
 
     let domain = '';
-    try { domain = new URL(rawUrl).hostname; } catch (e) {}
+    try { domain = new URL(rawUrl).hostname; } catch (e) { }
 
     let category = 'blog_comment';
     if (typeof classifyBacklink === 'function') {
@@ -1523,7 +1792,7 @@ function initBatchWorkbench() {
             scrapeGoogleSearchResultsHandler();
             return;
           }
-        } catch (e) {}
+        } catch (e) { }
       }
 
       if (!domainVal) {
@@ -1531,9 +1800,14 @@ function initBatchWorkbench() {
         return;
       }
 
-      const dorkQuery = domainVal.includes('.') 
-        ? 'site:.com "' + domainVal + '" "Leave a Reply" "Website"'
-        : 'site:.com "' + domainVal + '" "Leave a Reply" "Website"';
+      // 🌟 动态计算最近 1 个月起始日期，锁定高鲜活度活跃博文
+      const now = new Date();
+      now.setMonth(now.getMonth() - 1);
+      const afterDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+
+      const dorkQuery = domainVal.includes('.')
+        ? `site:.com "${domainVal}" "Leave a Reply" "Website" "Name" "Email" after:${afterDate}`
+        : `site:.com "${domainVal}" "Leave a Reply" "Website" "Name" "Email" after:${afterDate}`;
 
       const searchUrl = 'https://www.google.com/search?q=' + encodeURIComponent(dorkQuery) + '&num=100';
 
@@ -1648,7 +1922,7 @@ function initBatchWorkbench() {
       toxicItems.forEach(i => {
         if (i.domain) domainSet.add(i.domain);
         else {
-          try { domainSet.add(new URL(i.url).hostname); } catch (e) {}
+          try { domainSet.add(new URL(i.url).hostname); } catch (e) { }
         }
       });
 
@@ -1810,7 +2084,7 @@ function initBatchWorkbench() {
     if (cachedQueue) {
       currentBatchQueue = JSON.parse(cachedQueue);
     }
-  } catch (e) {}
+  } catch (e) { }
   updateBatchUI();
 }
 
@@ -1943,7 +2217,7 @@ async function scrapeGoogleSearchResultsHandler(silent = false) {
               const u = new URL(href, window.location.origin);
               const realQ = u.searchParams.get('q');
               if (realQ && realQ.startsWith('http')) href = realQ;
-            } catch (e) {}
+            } catch (e) { }
           }
 
           if (!href.startsWith('http')) return;
@@ -1959,7 +2233,7 @@ async function scrapeGoogleSearchResultsHandler(silent = false) {
 
             const title = (h3.innerText || '').trim() || host;
             out.push({ url: href, domain: host, title: title });
-          } catch (e) {}
+          } catch (e) { }
         });
 
         // 策略 2: 兜底扫描 SERP 容器 (#search, #rso) 中所有外部 <a> 链接
@@ -1975,7 +2249,7 @@ async function scrapeGoogleSearchResultsHandler(silent = false) {
                 const u = new URL(href, window.location.origin);
                 const realQ = u.searchParams.get('q');
                 if (realQ && realQ.startsWith('http')) href = realQ;
-              } catch (e) {}
+              } catch (e) { }
             }
 
             if (!href.startsWith('http')) return;
@@ -1994,7 +2268,7 @@ async function scrapeGoogleSearchResultsHandler(silent = false) {
               if (title.length >= 2) {
                 out.push({ url: href, domain: host, title: title });
               }
-            } catch (e) {}
+            } catch (e) { }
           });
         }
 
@@ -2022,7 +2296,7 @@ async function scrapeGoogleSearchResultsHandler(silent = false) {
       if (!existing.has((item.url || '').toLowerCase())) {
         let domain = item.domain || '';
         if (!domain) {
-          try { domain = new URL(item.url).hostname; } catch (e) {}
+          try { domain = new URL(item.url).hostname; } catch (e) { }
         }
 
         let category = 'blog_comment';
@@ -2144,7 +2418,7 @@ function scheduleHumanScrollToComment(tabId) {
   setTimeout(() => {
     if (!executed) {
       executed = true;
-      try { chrome.tabs.onUpdated.removeListener(onTabUpdated); } catch (e) {}
+      try { chrome.tabs.onUpdated.removeListener(onTabUpdated); } catch (e) { }
       executeHumanScrollInTab(tabId);
     }
   }, 3500);
@@ -2226,7 +2500,7 @@ async function executeHumanScrollInTab(tabId) {
             if (typeof target.focus === 'function') {
               try {
                 target.focus({ preventScroll: true });
-              } catch (e) {}
+              } catch (e) { }
             }
 
             // 2 秒后光效自然收敛
@@ -2247,7 +2521,7 @@ async function executeHumanScrollInTab(tabId) {
 
 window.openAndFocusUrl = openAndFocusUrl;
 
-window.toggleBatchItemStatus = function(index) {
+window.toggleBatchItemStatus = function (index) {
   if (currentBatchQueue[index]) {
     currentBatchQueue[index].status = currentBatchQueue[index].status === 'done' ? 'pending' : 'done';
     localStorage.setItem('comlinkai_batch_queue', JSON.stringify(currentBatchQueue));
@@ -2255,7 +2529,7 @@ window.toggleBatchItemStatus = function(index) {
   }
 };
 
-window.removeBatchItem = function(index) {
+window.removeBatchItem = function (index) {
   if (currentBatchQueue[index]) {
     currentBatchQueue.splice(index, 1);
     localStorage.setItem('comlinkai_batch_queue', JSON.stringify(currentBatchQueue));
@@ -2374,21 +2648,21 @@ function submitCommentFormInTab(commentText, profile) {
       try {
         captchaInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
         captchaInput.focus({ preventScroll: true });
-      } catch (e) {}
+      } catch (e) { }
     }
     return { success: true, submitted: false, captchaPresent: true, filledCount: filledFields.length };
   }
 
   // 提交按钮精确定位：优先在评论表单容器内部查找，彻底避免误触全局搜索框或订阅框的提交按钮
   const commentForm = commentTextarea ? commentTextarea.closest('form') : document.querySelector('form#commentform, .comment-form, form[action*="comment" i]');
-  const submitBtn = (commentForm ? commentForm.querySelector('button[type="submit"], input[type="submit"], #submit, button.submit, input[name="submit"]') : null) || 
-                    document.querySelector('form#commentform input[type="submit"], form#commentform button[type="submit"], #commentform #submit, button#comment-submit, #submit');
+  const submitBtn = (commentForm ? commentForm.querySelector('button[type="submit"], input[type="submit"], #submit, button.submit, input[name="submit"]') : null) ||
+    document.querySelector('form#commentform input[type="submit"], form#commentform button[type="submit"], #commentform #submit, button#comment-submit, #submit');
   if (submitBtn) {
     try {
       submitBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
       submitBtn.click();
       return { success: true, submitted: true, captchaPresent: false, filledCount: filledFields.length };
-    } catch (e) {}
+    } catch (e) { }
   }
 
   return { success: true, submitted: false, captchaPresent: false, filledCount: filledFields.length };
@@ -2417,7 +2691,7 @@ function updateBatchUI() {
     if (total === 0) {
       collectContainer.innerHTML = '<div id="collect-queue-empty" style="text-align: center; padding: 15px; color: var(--text-muted); font-size: 0.76rem;">暂无收集外链。输入目标域名或在 Google 搜索页点击“抓取当页10条”。</div>';
     } else {
-      collectContainer.innerHTML = currentBatchQueue.slice(0, 100).map(function(item, idx) {
+      collectContainer.innerHTML = currentBatchQueue.slice(0, 100).map(function (item, idx) {
         const isDone = item.status === 'done';
         const isToxic = item.status === 'toxic' || item.category === 'toxic';
         const textDecor = isDone ? 'text-decoration: line-through;' : '';
@@ -2426,15 +2700,15 @@ function updateBatchUI() {
 
         return '<div class="batch-item-card ' + (isDone ? 'item-done' : '') + '" style="display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; background: hsla(220, 30%, 6%, 0.6); border: 1px solid hsla(217, 32%, 18%, 0.6); border-radius: 6px; font-size: 0.74rem; margin-bottom: 4px;">' +
           '<div style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 8px;">' +
-            '<span style="font-size: 0.68rem; margin-right: 4px; padding: 1px 4px; border-radius: 3px; background: hsla(220, 30%, 15%, 0.8);">' + catBadge.icon + '</span>' +
-            '<span style="font-weight: 600; color: ' + col + '; ' + textDecor + '" title="' + item.url + '">' + (item.domain || item.url) + '</span>' +
+          '<span style="font-size: 0.68rem; margin-right: 4px; padding: 1px 4px; border-radius: 3px; background: hsla(220, 30%, 15%, 0.8);">' + catBadge.icon + '</span>' +
+          '<span style="font-weight: 600; color: ' + col + '; ' + textDecor + '" title="' + item.url + '">' + (item.domain || item.url) + '</span>' +
           '</div>' +
           '<div style="display: flex; gap: 4px; align-items: center;">' +
-            '<button class="btn btn-secondary btn-sm" data-action="open-url" data-url="' + encodeURIComponent(item.url) + '" style="padding: 2px 6px; font-size: 0.68rem;">直达</button>' +
-            '<button class="btn btn-secondary btn-sm" data-action="toggle-status" data-index="' + idx + '" style="padding: 2px 5px; font-size: 0.68rem; color: ' + (isDone ? '#fbbf24' : '#34d399') + ';" title="' + (isDone ? '标记为未完成' : '标记为已完成') + '">' + (isDone ? '↩' : '✔') + '</button>' +
-            '<button class="btn btn-secondary btn-sm" data-action="remove-item" data-index="' + idx + '" style="padding: 2px 5px; font-size: 0.68rem; color: #f87171;" title="删除此条">×</button>' +
+          '<button class="btn btn-secondary btn-sm" data-action="open-url" data-url="' + encodeURIComponent(item.url) + '" style="padding: 2px 6px; font-size: 0.68rem;">直达</button>' +
+          '<button class="btn btn-secondary btn-sm" data-action="toggle-status" data-index="' + idx + '" style="padding: 2px 5px; font-size: 0.68rem; color: ' + (isDone ? '#fbbf24' : '#34d399') + ';" title="' + (isDone ? '标记为未完成' : '标记为已完成') + '">' + (isDone ? '↩' : '✔') + '</button>' +
+          '<button class="btn btn-secondary btn-sm" data-action="remove-item" data-index="' + idx + '" style="padding: 2px 5px; font-size: 0.68rem; color: #f87171;" title="删除此条">×</button>' +
           '</div>' +
-        '</div>';
+          '</div>';
       }).join('');
     }
   }
@@ -2497,9 +2771,9 @@ function updateBatchUI() {
     if (filteredItems.length === 0) {
       publishContainer.innerHTML = '<div id="batch-queue-empty" style="text-align: center; padding: 12px; color: var(--text-muted); font-size: 0.75rem;">' +
         (total === 0 ? '暂无待发布外链，请先在【收集】卡片中抓取当页10条。' : '当前分类筛选下暂无外链条目。') +
-      '</div>';
+        '</div>';
     } else {
-      publishContainer.innerHTML = filteredItems.slice(0, 100).map(function(wrap) {
+      publishContainer.innerHTML = filteredItems.slice(0, 100).map(function (wrap) {
         const item = wrap.item;
         const idx = wrap.originalIndex;
         const isDone = item.status === 'done';
@@ -2517,15 +2791,15 @@ function updateBatchUI() {
 
         return '<div class="batch-item-card ' + (isDone ? 'item-done' : '') + '" style="display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; background: hsla(220, 30%, 6%, 0.6); border: 1px solid ' + (isToxic ? 'rgba(248,113,113,0.3)' : 'hsla(217, 32%, 18%, 0.6)') + '; border-radius: 6px; font-size: 0.74rem; margin-bottom: 4px;">' +
           '<div style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-right: 8px;">' +
-            '<span style="font-size: 0.68rem; margin-right: 4px; padding: 1px 5px; border-radius: 3px; background: ' + catBadge.bg + '; color: ' + catBadge.color + ';">' + catBadge.name + '</span>' +
-            '<span style="font-weight: 600; color: ' + col + '; ' + textDecor + '" title="' + item.url + '">' + (item.domain || item.url) + '</span>' +
+          '<span style="font-size: 0.68rem; margin-right: 4px; padding: 1px 5px; border-radius: 3px; background: ' + catBadge.bg + '; color: ' + catBadge.color + ';">' + catBadge.name + '</span>' +
+          '<span style="font-weight: 600; color: ' + col + '; ' + textDecor + '" title="' + item.url + '">' + (item.domain || item.url) + '</span>' +
           '</div>' +
           '<div style="display: flex; gap: 4px; align-items: center;">' +
-            '<button class="btn btn-secondary btn-sm" data-action="open-url" data-url="' + encodeURIComponent(item.url) + '" style="padding: 2px 6px; font-size: 0.68rem;" title="打开此网址">' + actionBtnText + '</button>' +
-            '<button class="btn btn-secondary btn-sm" data-action="toggle-status" data-index="' + idx + '" style="padding: 2px 5px; font-size: 0.68rem; color: ' + (isDone ? '#fbbf24' : '#34d399') + ';" title="' + (isDone ? '标记为未完成' : '标记为已完成') + '">' + (isDone ? '↩' : '✔') + '</button>' +
-            '<button class="btn btn-secondary btn-sm" data-action="remove-item" data-index="' + idx + '" style="padding: 2px 5px; font-size: 0.68rem; color: #f87171;" title="删除此条">×</button>' +
+          '<button class="btn btn-secondary btn-sm" data-action="open-url" data-url="' + encodeURIComponent(item.url) + '" style="padding: 2px 6px; font-size: 0.68rem;" title="打开此网址">' + actionBtnText + '</button>' +
+          '<button class="btn btn-secondary btn-sm" data-action="toggle-status" data-index="' + idx + '" style="padding: 2px 5px; font-size: 0.68rem; color: ' + (isDone ? '#fbbf24' : '#34d399') + ';" title="' + (isDone ? '标记为未完成' : '标记为已完成') + '">' + (isDone ? '↩' : '✔') + '</button>' +
+          '<button class="btn btn-secondary btn-sm" data-action="remove-item" data-index="' + idx + '" style="padding: 2px 5px; font-size: 0.68rem; color: #f87171;" title="删除此条">×</button>' +
           '</div>' +
-        '</div>';
+          '</div>';
       }).join('');
     }
   }
@@ -2665,7 +2939,7 @@ const autoPilotEngine = {
         type: 'AUTOPILOT_SET_STATUS',
         statusText,
         color
-      }).catch(() => {});
+      }).catch(() => { });
     }
   },
 
@@ -2755,7 +3029,7 @@ const autoPilotEngine = {
         // 阶段 1：标签组隔离导航 (Tab Group Navigation)
         // ----------------------------------------------------
         let hostName = 'target';
-        try { hostName = new URL(targetUrl).hostname; } catch (e) {}
+        try { hostName = new URL(targetUrl).hostname; } catch (e) { }
         this.updateUI(`📍 [1/5] 标签组隔离载入: ${hostName}`, '#60a5fa');
         this.log(`[1/5] 正在隔离导航至: ${targetUrl}`);
         await this.updateGroupStatus(`载入: ${hostName}`, 'cyan');
@@ -2858,7 +3132,7 @@ const autoPilotEngine = {
               comment: commentText,
               status: 'published'
             });
-          } catch (e) {}
+          } catch (e) { }
         }
 
         this.consecutiveErrors = 0;
@@ -2967,11 +3241,11 @@ function renderDirectoryUI(category = 'all', searchQuery = '') {
   const categoryContainer = document.getElementById('dir-category-pills');
   if (categoryContainer) {
     const categories = window.linkDirectory.getCategories();
-    categoryContainer.innerHTML = categories.map(function(c) {
+    categoryContainer.innerHTML = categories.map(function (c) {
       var isAct = c.id === category;
       return '<button class="dir-cat-pill ' + (isAct ? 'active' : '') + '" data-cat="' + c.id + '" style="padding: 3px 8px; font-size: 0.7rem; border-radius: 4px; border: 1px solid ' + (isAct ? '#00f2fe' : 'hsla(217, 32%, 22%, 0.8)') + '; background: ' + (isAct ? 'rgba(0,242,254,0.15)' : 'hsla(220, 30%, 6%, 0.6)') + '; color: ' + (isAct ? '#00f2fe' : 'var(--text-muted)') + '; cursor: pointer; white-space: nowrap; flex-shrink: 0;">' +
         c.name +
-      '</button>';
+        '</button>';
     }).join('');
 
     categoryContainer.querySelectorAll('.dir-cat-pill').forEach(pill => {
@@ -2984,18 +3258,18 @@ function renderDirectoryUI(category = 'all', searchQuery = '') {
   const grid = document.getElementById('dir-cards-grid');
   if (grid) {
     const targets = window.linkDirectory.getTargets(category, searchQuery);
-    grid.innerHTML = targets.map(function(t) {
+    grid.innerHTML = targets.map(function (t) {
       return '<div class="directory-card-item" style="background: hsla(220, 30%, 6%, 0.8); border: 1px solid hsla(217, 32%, 22%, 0.8); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px;">' +
         '<div style="display: flex; justify-content: space-between; align-items: center;">' +
-          '<h4 style="margin: 0; font-size: 0.8rem; color: var(--text-main);">' + t.title + '</h4>' +
-          '<span style="font-size: 0.68rem; padding: 2px 6px; border-radius: 4px; background: rgba(56,189,248,0.15); color: #38bdf8;">' + t.authority + '</span>' +
+        '<h4 style="margin: 0; font-size: 0.8rem; color: var(--text-main);">' + t.title + '</h4>' +
+        '<span style="font-size: 0.68rem; padding: 2px 6px; border-radius: 4px; background: rgba(56,189,248,0.15); color: #38bdf8;">' + t.authority + '</span>' +
         '</div>' +
         '<p style="font-size: 0.72rem; color: var(--text-muted); margin: 0;">' + t.desc + '</p>' +
         '<div style="display: flex; justify-content: space-between; align-items: center; margin-top: 4px;">' +
-          '<span style="font-size: 0.68rem; color: #34d399;">' + t.commentType + '</span>' +
-          '<button class="btn btn-primary btn-sm" onclick="window.open(\'' + t.url + '\', \'_blank\')" style="padding: 3px 8px; font-size: 0.7rem;">直达目标 🚀</button>' +
+        '<span style="font-size: 0.68rem; color: #34d399;">' + t.commentType + '</span>' +
+        '<button class="btn btn-primary btn-sm" onclick="window.open(\'' + t.url + '\', \'_blank\')" style="padding: 3px 8px; font-size: 0.7rem;">直达目标 🚀</button>' +
         '</div>' +
-      '</div>';
+        '</div>';
     }).join('');
   }
 }
@@ -3004,25 +3278,128 @@ function renderDashboardUI(filter = 'all') {
   activeDashboardFilter = filter;
   if (!window.publishLogger) return;
 
-  const logs = window.publishLogger.getLogs();
-  const recordsContainer = document.getElementById('dash-records-list');
+  const stats = window.publishLogger.getStats ? window.publishLogger.getStats() : {};
+  const elTotal = document.getElementById('dash-stat-total');
+  const elLiveRate = document.getElementById('dash-stat-liverate');
+  const elDoFollow = document.getElementById('dash-stat-dofollow');
+  const elAvgScore = document.getElementById('dash-stat-avgscore');
+  if (elTotal) elTotal.textContent = stats.published || stats.total || 0;
+  if (elLiveRate) elLiveRate.textContent = (stats.liveRate || 0) + '%';
+  if (elDoFollow) elDoFollow.textContent = stats.liveDofollow || 0;
+  if (elAvgScore) elAvgScore.textContent = stats.avgScore || 0;
+
+  const recordsContainer = document.getElementById('dashboard-log-container') || document.getElementById('dash-records-list');
   if (!recordsContainer) return;
 
+  let logs = window.publishLogger.getLogs();
+  if (filter !== 'all') {
+    logs = logs.filter(l => {
+      const vs = l.verifyStatus || 'unchecked';
+      if (filter === 'live_dofollow') return vs === 'live_dofollow' || vs === 'live_nofollow';
+      if (filter === 'pending') return vs === 'pending' || vs === 'unchecked';
+      if (filter === 'removed') return vs === 'removed' || vs.includes('error');
+      return vs === filter;
+    });
+  }
+
   if (logs.length === 0) {
-    recordsContainer.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--text-muted); font-size: 0.76rem;">暂无外链发布与存活记录</div>';
+    recordsContainer.innerHTML = '<div style="text-align: center; padding: 20px; color: var(--text-muted); font-size: 0.76rem;">暂无匹配的外链发布与存活记录</div>';
     return;
   }
 
-  recordsContainer.innerHTML = logs.slice(0, 30).map(function(l) {
+  recordsContainer.innerHTML = logs.slice(0, 50).map(function (l) {
     var isPub = l.status === 'published';
+    var vs = l.verifyStatus || 'unchecked';
+    var vsBadge = '';
+    if (vs === 'live_dofollow') {
+      vsBadge = '<span style="background: rgba(16,185,129,0.2); color: #10b981; border: 1px solid #10b981; padding: 1px 6px; border-radius: 4px; font-size: 0.68rem; font-weight: 600;">🟢 LIVE (DoFollow)</span>';
+    } else if (vs === 'live_nofollow') {
+      vsBadge = '<span style="background: rgba(52,211,153,0.15); color: #34d399; border: 1px solid #34d399; padding: 1px 6px; border-radius: 4px; font-size: 0.68rem; font-weight: 600;">🟡 LIVE (NoFollow)</span>';
+    } else if (vs === 'pending') {
+      vsBadge = '<span style="background: rgba(251,191,36,0.15); color: #fbbf24; border: 1px solid #fbbf24; padding: 1px 6px; border-radius: 4px; font-size: 0.68rem; font-weight: 600;">⏳ 待审核 (Pending)</span>';
+    } else if (vs === 'removed') {
+      vsBadge = '<span style="background: rgba(248,113,113,0.15); color: #f87171; border: 1px solid #f87171; padding: 1px 6px; border-radius: 4px; font-size: 0.68rem; font-weight: 600;">🔴 未公开/被拒</span>';
+    } else if (vs.includes('error')) {
+      vsBadge = '<span style="background: rgba(239,68,68,0.15); color: #ef4444; border: 1px solid #ef4444; padding: 1px 6px; border-radius: 4px; font-size: 0.68rem; font-weight: 600;">⚠️ 异常</span>';
+    } else {
+      vsBadge = '<span style="background: rgba(148,163,184,0.15); color: #94a3b8; border: 1px solid #94a3b8; padding: 1px 6px; border-radius: 4px; font-size: 0.68rem;">⚪ 未检测</span>';
+    }
+
     return '<div class="dash-log-card" style="background: hsla(220, 30%, 6%, 0.7); border: 1px solid hsla(217, 32%, 18%, 0.7); border-radius: 6px; padding: 8px 10px; margin-bottom: 6px; font-size: 0.74rem;">' +
-      '<div style="display: flex; justify-content: space-between;">' +
-        '<span style="font-weight: 600; color: var(--text-main);">' + (l.domain || l.url) + '</span>' +
-        '<span style="color: ' + (isPub ? '#34d399' : '#f87171') + '; font-weight: 600;">' + (isPub ? '✔ 已发布' : '跳过') + '</span>' +
+      '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">' +
+      '<a href="' + l.url + '" target="_blank" style="font-weight: 600; color: #00f2fe; text-decoration: none; max-width: 65%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' + (l.domain || l.url) + '</a>' +
+      '<div>' + vsBadge + '</div>' +
       '</div>' +
-      '<div style="font-size: 0.68rem; color: var(--text-muted); margin-top: 4px;">' + (l.timestamp ? new Date(l.timestamp).toLocaleString() : '') + '</div>' +
-    '</div>';
+      '<div style="color: var(--text-muted); font-size: 0.7rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 3px;">' + (l.title || '无标题') + '</div>' +
+      '<div style="display: flex; justify-content: space-between; font-size: 0.66rem; color: var(--text-muted);">' +
+      '<span>' + (l.timestamp ? new Date(l.timestamp).toLocaleString() : '') + '</span>' +
+      '<span style="color: ' + (isPub ? '#34d399' : '#f87171') + ';">' + (isPub ? '✔ 已提交' : '跳过') + '</span>' +
+      '</div>' +
+      '</div>';
   }).join('');
+}
+
+function initDashboardEvents() {
+  // 1. 过滤标签交互
+  const pills = document.querySelectorAll('#dash-filter-pills .dash-pill');
+  pills.forEach(pill => {
+    pill.addEventListener('click', () => {
+      pills.forEach(p => {
+        p.classList.remove('active');
+        p.style.background = 'transparent';
+        p.style.borderColor = 'hsla(217, 32%, 22%, 0.8)';
+        p.style.color = 'var(--text-muted)';
+      });
+      pill.classList.add('active');
+      pill.style.background = 'rgba(96,165,250,0.15)';
+      pill.style.borderColor = '#60a5fa';
+      pill.style.color = '#60a5fa';
+      renderDashboardUI(pill.dataset.filter || 'all');
+    });
+  });
+
+  // 2. 导出 CSV
+  const btnExport = document.getElementById('btn-export-dashboard-csv');
+  if (btnExport && window.publishLogger) {
+    btnExport.addEventListener('click', () => window.publishLogger.exportCSV());
+  }
+
+  // 3. 一键检测外链存活
+  const btnVerifyAll = document.getElementById('btn-verify-all-links');
+  const probeStatus = document.getElementById('dash-probe-status');
+  if (btnVerifyAll && window.linkChecker && window.publishLogger) {
+    btnVerifyAll.addEventListener('click', async () => {
+      const logs = window.publishLogger.getLogs();
+      if (!logs.length) {
+        alert('当前暂无可检测的外链发布记录！');
+        return;
+      }
+      btnVerifyAll.disabled = true;
+      btnVerifyAll.textContent = '⏳ 正在探针检测...';
+      if (probeStatus) probeStatus.textContent = `探针正在并发扫描中 (共 ${logs.length} 条)...`;
+
+      const activeProj = window.projectManager ? window.projectManager.getActiveProject() : null;
+      const targetWebsite = activeProj ? (activeProj.websiteUrl || activeProj.url || 'apivale.com') : 'apivale.com';
+
+      try {
+        await window.linkChecker.checkBatch(logs, targetWebsite, '', (curr, total, item) => {
+          if (probeStatus) probeStatus.textContent = `扫描中: [${curr}/${total}] ${item.result.verifyStatus.toUpperCase()}`;
+          if (item && item.id) {
+            window.publishLogger.updateVerifyStatus(item.id, item.result);
+          }
+        });
+        if (probeStatus) probeStatus.textContent = `🎉 探针扫描完成！已更新全部外链存活状态。`;
+        renderDashboardUI();
+        alert('🎉 外链存活探针检测完成！状态看板已全面更新。');
+      } catch (err) {
+        if (probeStatus) probeStatus.textContent = `探针检测中断: ${err.message}`;
+        alert('外链探针检测失败: ' + err.message);
+      } finally {
+        btnVerifyAll.disabled = false;
+        btnVerifyAll.textContent = '⚡ 一键检测外链存活';
+      }
+    });
+  }
 }
 
 function initGoogleSheetsUI() {
@@ -3135,7 +3512,7 @@ function initGoogleSheetsUI() {
     });
   }
 
-  // 7. 拉取表格数据并检测存活
+  // 7. 拉取表格数据并并发执行存活探针检测
   if (btnPullProbe) {
     btnPullProbe.addEventListener('click', async () => {
       if (!window.googleSheetsSync.isConfigured()) {
@@ -3144,11 +3521,59 @@ function initGoogleSheetsUI() {
         return;
       }
       btnPullProbe.disabled = true;
-      btnPullProbe.textContent = '⏳ 拉取中...';
+      btnPullProbe.textContent = '⏳ 拉取表格中...';
+      const probeStatus = document.getElementById('dash-probe-status');
+      if (probeStatus) probeStatus.textContent = '正在从 Google Sheet 读取最新发布记录...';
+
       try {
         const rows = await window.googleSheetsSync.fetchLogEntriesFromSheet();
-        alert(`📥 成功从 Google Sheet 拉取到 ${rows.length} 条发布记录！`);
+        if (!rows.length) {
+          alert('Google Sheet 中当前尚无可检测的发布记录！');
+          return;
+        }
+
+        // 同步入库本地 publishLogger（若本地为空或缺失）
+        if (window.publishLogger) {
+          const existingLogs = window.publishLogger.getLogs();
+          const existingUrls = new Set(existingLogs.map(l => l.url));
+          rows.forEach((r, idx) => {
+            if (!existingUrls.has(r.url)) {
+              window.publishLogger.logAction({
+                id: 'gsheet_' + Date.now() + '_' + idx,
+                timestamp: r.timestamp || new Date().toISOString(),
+                url: r.url,
+                domain: r.domain,
+                title: r.title,
+                status: r.status || 'published',
+                verifyStatus: r.verifyStatus || 'unchecked',
+                relType: r.relType || 'unknown',
+                relevanceScore: r.relevanceScore || 95,
+                comment: r.comment || ''
+              });
+            }
+          });
+        }
+
+        const logs = window.publishLogger ? window.publishLogger.getLogs() : [];
+        const activeProj = window.projectManager ? window.projectManager.getActiveProject() : null;
+        const targetWebsite = activeProj ? (activeProj.websiteUrl || activeProj.url || 'apivale.com') : 'apivale.com';
+
+        btnPullProbe.textContent = `⏳ 探针扫描中 (共 ${logs.length} 条)...`;
+        if (window.linkChecker) {
+          await window.linkChecker.checkBatch(logs, targetWebsite, '', (curr, total, item) => {
+            btnPullProbe.textContent = `⏳ 扫描 [${curr}/${total}]`;
+            if (probeStatus) probeStatus.textContent = `探针扫描中: [${curr}/${total}] ${item.result.verifyStatus.toUpperCase()}`;
+            if (item && item.id && window.publishLogger) {
+              window.publishLogger.updateVerifyStatus(item.id, item.result);
+            }
+          });
+        }
+
+        renderDashboardUI();
+        if (probeStatus) probeStatus.textContent = `🎉 成功拉取并完成 ${logs.length} 条外链存活探针扫描！`;
+        alert(`🎉 成功从 Google Sheet 拉取 ${rows.length} 条记录，并已完成全量存活探针检测！`);
       } catch (err) {
+        if (probeStatus) probeStatus.textContent = `拉取/探针失败: ${err.message}`;
         alert('拉取失败: ' + err.message);
       } finally {
         btnPullProbe.disabled = false;
@@ -3156,6 +3581,9 @@ function initGoogleSheetsUI() {
       }
     });
   }
+
+  // 初始化看板事件监听
+  initDashboardEvents();
 }
 
 // ==========================================
@@ -3175,7 +3603,7 @@ function initProjectManagerUI() {
     const projects = window.projectManager.getProjects();
     const active = window.projectManager.getActiveProject();
 
-    selProject.innerHTML = projects.map(function(p) {
+    selProject.innerHTML = projects.map(function (p) {
       return '<option value="' + p.id + '" ' + (active && p.id === active.id ? 'selected' : '') + '>📁 ' + p.name + '</option>';
     }).join('');
   };
@@ -3253,7 +3681,7 @@ function initProjectManagerUI() {
       }
 
       let domain = '';
-      try { domain = new URL(url.startsWith('http') ? url : 'https://' + url).hostname; } catch (e) {}
+      try { domain = new URL(url.startsWith('http') ? url : 'https://' + url).hostname; } catch (e) { }
 
       const favicon = url ? url.replace(/\/+$/, '') + '/favicon.ico' : '';
       const screenshot = url ? url.replace(/\/+$/, '') + '/og-image.png' : '';
