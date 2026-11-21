@@ -242,7 +242,7 @@ function connectWebSocket() {
       updateUIStatus('connected', candidate);
       try {
         ws.send(JSON.stringify({ type: 'hello', role: 'sidepanel' }));
-      } catch (e) {}
+      } catch (e) { }
 
       if (pingTimer) clearInterval(pingTimer);
       pingTimer = setInterval(() => {
@@ -346,7 +346,7 @@ async function handleRemoteAgentAction(action, data = {}) {
   if (action === 'close_tab') {
     const tabId = data.tabId;
     if (!tabId) throw new Error('缺少 tabId 参数');
-    await chrome.tabs.remove(tabId).catch(() => {});
+    await chrome.tabs.remove(tabId).catch(() => { });
     return { success: true, tabId };
   }
 
