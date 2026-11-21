@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ComLinkAI",
-  "version": "2.0.0",
-  "description": "AI 浏览器自动化操控中转 & 博客评论反链智能助手 & 网页剪藏",
+  "version": "2.3.0",
+  "description": "AI 浏览器自动化操控中转 & 博客评论反链智能助手 & 网页剪藏 (L4 并发隔离与无人值守版)",
   "permissions": [
     "activeTab",
     "tabs",

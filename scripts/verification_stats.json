@@ -1,0 +1,33 @@
+{
+  "total": 156,
+  "byDate": {
+    "2026-11-19": {
+      "total": 96,
+      "approved": 2,
+      "pending": 0,
+      "not_live": 71,
+      "error": 23
+    },
+    "2026-11-20": {
+      "total": 32,
+      "approved": 0,
+      "pending": 0,
+      "not_live": 12,
+      "error": 20
+    },
+    "2026-11-21": {
+      "total": 28,
+      "approved": 0,
+      "pending": 0,
+      "not_live": 5,
+      "error": 23
+    }
+  },
+  "byStatus": {
+    "approved_live": 2,
+    "not_live": 88,
+    "http_error": 58,
+    "timeout": 4,
+    "network_error": 4
+  }
+}
