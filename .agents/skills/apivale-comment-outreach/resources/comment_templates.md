@@ -133,3 +133,18 @@ In our production gateway benchmarks testing autonomous multi-file refactoring, 
 
 When evaluating Opus 5.5 against Gemini 4 Neon for agentic coding in your environment, are you seeing Opus's reasoning advantages outweigh Neon's CursorBench margin and throughput, or is token economics driving a shift toward tiered model routing?
 ```
+
+
+---
+
+## 模板 10：6.2 Astra vs Opus 5.5 编程基准、定价与自主智能体成本指南
+* **适用内页**: `/blog/6-2-astra-vs-opus-5-5-pricing-benchmarks-guide/`
+* **出场 Persona**: `Elena Rostova @ APIVALE` *(Lead AI Performance Engineer)*
+
+```text
+Really thorough breakdown on evaluating autonomous coding agents across multi-file refactoring tasks. The natural expectation when testing OpenAI's 6.2 Astra against Opus 5.5 is that Astra's 84.2% SWE-bench score makes it a slam-dunk drop-in replacement across the board.
+
+However, in our production evaluations stress-testing developer workflows, we encountered an intriguing operational trade-off: Astra's output token rate ($40/M vs Opus's $20/M) means that during extensive exploratory agent loops with unbounded scratchpads, token burn compounds rapidly unless aggressive prompt caching and tool-call payload pruning are strictly enforced. Pairing Astra as a high-tier architectural supervisor while dynamically delegating repetitive syntax fixes and unit test execution to lighter models like Sol 6.2 ($10/M output) ended up delivering the optimal balance between high solve rates and sustainable operational cost.
+
+When evaluating Astra in your coding workflows, have you implemented tiered routing layers to isolate scratchpad execution, or are you running end-to-end sessions exclusively on the flagship model?
+```
