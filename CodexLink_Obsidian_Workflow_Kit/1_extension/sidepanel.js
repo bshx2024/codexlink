@@ -713,6 +713,14 @@ async function handleRemoteAgentAction(action, data = {}) {
     return { success: true };
   }
 
+  if (action === 'reload_extension') {
+    console.log('[ComLinkAI SidePanel] 收到重载指令，正在执行 chrome.runtime.reload()...');
+    setTimeout(() => {
+      chrome.runtime.reload();
+    }, 100);
+    return { success: true, message: 'Extension reloading triggered' };
+  }
+
   if (action === 'waitForElement') {
     const { selector, timeout = 10000 } = data;
     const start = Date.now();

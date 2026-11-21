@@ -980,6 +980,15 @@ async function handleBackgroundAction(action, data = {}) {
     return { success: true, closedCount };
   }
 
+  // 6.15 重载扩展自身 (读取磁盘最新 manifest 与代码)
+  if (action === 'reload_extension') {
+    console.log('[ComLinkAI Background] 收到重载指令，正在执行 chrome.runtime.reload()...');
+    setTimeout(() => {
+      chrome.runtime.reload();
+    }, 100);
+    return { success: true, message: 'Extension reloading triggered' };
+  }
+
   throw new Error(`[Background] 未知操作指令: ${action}`);
 }
 
