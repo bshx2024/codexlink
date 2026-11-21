@@ -71,13 +71,14 @@ async function executeHumanSubmission(task, options = {}) {
   const {
     saveScreenshot = true,
     artifactDir = '',
-    syncSheet = true
+    syncSheet = true,
+    tabId = task.tabId || null
   } = options;
 
   const expertEmail = task.email || getExpertEmail(task.author);
 
   console.log(`\n======================================================`);
-  console.log(`[拟人化发布] 目标站点: ${task.domain || new URL(task.pageUrl).hostname}`);
+  console.log(`[拟人化发布] 目标站点: ${task.domain || new URL(task.pageUrl).hostname} (Tab #${tabId || 'active'})`);
   console.log(`文章地址: ${task.pageUrl}`);
   console.log(`落地内页: ${task.targetUrl}`);
   console.log(`出场角色: ${task.author} (${expertEmail})`);
@@ -85,11 +86,45 @@ async function executeHumanSubmission(task, options = {}) {
 
   const taskStart = Date.now();
 
-  // 1. 导航进入页面
+  // 1. 导航进入页面 (使用专属 tabId 隔离运行)
   console.log('1. [页面进入] 正在导航至目标博文并预留阅读加载时长...');
-  await callAction('navigate', { url: task.pageUrl + '#respond' });
+  await callAction('navigate', { url: task.pageUrl + '#respond', tabId });
   // 模拟人类进站阅读与滚动浏览：等待 4.5s
   await sleep(4500);
+
+  // 1.1 极速 3 秒毒性特征探测 (Comments closed / 无表单 / 强验证码)
+  try {
+    const probeRes = await callAction('getActiveTab', { tabId });
+    const content = (probeRes && probeRes.data && probeRes.data.content) ? probeRes.data.content.toLowerCase() : '';
+    const title = (probeRes && probeRes.data && probeRes.data.title) ? probeRes.data.title.toLowerCase() : '';
+
+    if (content.includes('comments are closed') || content.includes('评论已关闭') || content.includes('关闭了评论')) {
+      const err = new Error('Comments are closed');
+      err.isToxic = true;
+      err.toxicReason = 'Comments are closed';
+      throw err;
+    }
+
+    if (title.includes('just a moment') || content.includes('verify you are human') || content.includes('cloudflare')) {
+      const err = new Error('Cloudflare Anti-Bot Challenge detected');
+      err.isToxic = true;
+      err.toxicReason = 'Cloudflare Anti-Bot Challenge';
+      throw err;
+    }
+
+    // 检查表单与输入框
+    const els = await callAction('getElements', { tabId });
+    const elList = (els && els.data) ? els.data : (Array.isArray(els) ? els : []);
+    const hasCommentInput = elList.some(el => el.tag === 'textarea' || (el.name && el.name.toLowerCase().includes('comment')) || (el.id && el.id.toLowerCase().includes('comment')));
+    if (elList.length > 0 && !hasCommentInput) {
+      const err = new Error('No comment form detected on page');
+      err.isToxic = true;
+      err.toxicReason = 'No comment form detected';
+      throw err;
+    }
+  } catch (probeErr) {
+    if (probeErr.isToxic) throw probeErr;
+  }
 
   // 2. 调用 ComLinkAI 核心拟人化填表管道 (Human-Like Filling Pipeline)
   console.log('2. [拟人化输入] 启动平滑缓动滚动、键盘按键流与字段步进停顿...');
@@ -98,7 +133,8 @@ async function executeHumanSubmission(task, options = {}) {
     author: task.author,
     email: expertEmail,
     url: task.targetUrl,
-    autoSubmit: false // 先不自动提交，留出时间截取填写前存证
+    autoSubmit: false, // 先不自动提交，留出时间截取填写前存证
+    tabId
   });
   console.log('表单填写结果:', JSON.stringify(fillRes));
 
@@ -106,7 +142,7 @@ async function executeHumanSubmission(task, options = {}) {
   if (saveScreenshot && artifactDir) {
     console.log('3. [存证截屏] 抓取填单完成态截图 (Pre-submit)...');
     await sleep(600);
-    const snap1 = await callAction('screenshot');
+    const snap1 = await callAction('screenshot', { tabId });
     if (snap1 && snap1.data && snap1.data.dataUrl) {
       const b64 = snap1.data.dataUrl.replace(/^data:image\/\w+;base64,/, '');
       const tag = (task.domain || 'blog').replace(/[^a-zA-Z0-9]/g, '_');
@@ -122,7 +158,7 @@ async function executeHumanSubmission(task, options = {}) {
 
   // 5. 触发 CDP 物理级贝塞尔鼠标点击 (CDP Physical Click with isTrusted === true)
   console.log('5. [CDP 物理点击] 派发贝塞尔轨迹移动、物理按压 (75~125ms) 与释放...');
-  const clickRes = await callAction('click', { selector: '#submit, button[type="submit"], input[type="submit"], button.submit, input[name="submit"]' });
+  const clickRes = await callAction('click', { selector: '#submit, button[type="submit"], input[type="submit"], button.submit, input[name="submit"]', tabId });
   console.log('CDP 物理提交结果:', JSON.stringify(clickRes));
 
   // 6. 等待后台网关响应
@@ -132,7 +168,7 @@ async function executeHumanSubmission(task, options = {}) {
   // 7. 抓取提交后存证截图
   if (saveScreenshot && artifactDir) {
     console.log('7. [存证截屏] 抓取提交后审核态截图 (Post-submit)...');
-    const snap2 = await callAction('screenshot');
+    const snap2 = await callAction('screenshot', { tabId });
     if (snap2 && snap2.data && snap2.data.dataUrl) {
       const b64 = snap2.data.dataUrl.replace(/^data:image\/\w+;base64,/, '');
       const tag = (task.domain || 'blog').replace(/[^a-zA-Z0-9]/g, '_');
@@ -141,7 +177,7 @@ async function executeHumanSubmission(task, options = {}) {
     }
   }
 
-  const tabRes = await callAction('getActiveTab');
+  const tabRes = await callAction('getActiveTab', { tabId });
   const actualTitle = (tabRes.data && tabRes.data.title) ? tabRes.data.title : (task.title || '');
   const totalElapsedMs = Date.now() - taskStart;
 

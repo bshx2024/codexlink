@@ -1,5 +1,5 @@
 // ==========================================================================
-// ComLinkAI Pro v2.2.0 - 核心侧边栏控制引擎 (Pristine Clean Build)
+// ComLinkAI Pro v2.3.0 - 核心侧边栏控制引擎 (L4 并发隔离与无人值守版)
 // ==========================================================================
 
 const SERVER_CANDIDATES = [
@@ -240,6 +240,9 @@ function connectWebSocket() {
         reconnectTimer = null;
       }
       updateUIStatus('connected', candidate);
+      try {
+        ws.send(JSON.stringify({ type: 'hello', role: 'sidepanel' }));
+      } catch (e) {}
 
       if (pingTimer) clearInterval(pingTimer);
       pingTimer = setInterval(() => {
@@ -332,7 +335,33 @@ function updateUIStatus(status, detailText = '') {
 // 统一分发来自 AI Agent (MCP/WebSocket/REST) 的浏览器操控指令
 // --------------------------------------------------------------------------
 async function handleRemoteAgentAction(action, data = {}) {
+  // 静默创建后台隔离标签页
+  if (action === 'create_tab') {
+    const { url = 'about:blank' } = data;
+    const newTab = await chrome.tabs.create({ url, active: false });
+    return { success: true, tabId: newTab.id };
+  }
+
+  // 安全销毁指定标签页
+  if (action === 'close_tab') {
+    const tabId = data.tabId;
+    if (!tabId) throw new Error('缺少 tabId 参数');
+    await chrome.tabs.remove(tabId).catch(() => {});
+    return { success: true, tabId };
+  }
+
   if (action === 'getActiveTab') {
+    if (data.tabId) {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId: data.tabId },
+        func: () => ({
+          title: document.title,
+          url: window.location.href,
+          content: document.body ? document.body.innerText : ''
+        })
+      });
+      return results && results[0] ? results[0].result : { title: '', url: '', content: '' };
+    }
     const tabData = await fetchActiveTabContent();
     currentExtractedContent = tabData;
     renderMarkdownPreview(tabData);
@@ -340,57 +369,69 @@ async function handleRemoteAgentAction(action, data = {}) {
   }
 
   if (action === 'navigate') {
-    const { url } = data;
+    const { url, tabId } = data;
     if (!url) throw new Error('缺少 url 参数');
+    // 若显式携带 tabId，坚决不切前台，直接后台更新
+    if (tabId) {
+      await chrome.tabs.update(tabId, { url });
+      return { success: true, tabId, url };
+    }
     await openAndFocusUrl(url);
     return { success: true };
   }
 
   if (action === 'click') {
-    const { selector } = data;
+    const { selector, tabId } = data;
     if (!selector) throw new Error('缺少 selector 参数');
+    let targetTabId = tabId;
+    if (!targetTabId) {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab) targetTabId = tab.id;
+    }
+    if (!targetTabId) throw new Error('未找到可用目标标签页');
+
     let clickSuccess = false;
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tab) {
-        const [{ result: coords }] = await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          func: (sel) => {
-            const el = document.querySelector(sel);
-            if (!el) return null;
-            el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-            const rect = el.getBoundingClientRect();
-            return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
-          },
-          args: [selector]
-        });
-        if (coords) {
-          const res = await chrome.runtime.sendMessage({ type: 'CDP_PHYSICAL_CLICK', tabId: tab.id, x: coords.x, y: coords.y });
-          if (res && res.success) clickSuccess = true;
-        }
+      const [{ result: coords }] = await chrome.scripting.executeScript({
+        target: { tabId: targetTabId },
+        func: (sel) => {
+          const el = document.querySelector(sel);
+          if (!el) return null;
+          el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          const rect = el.getBoundingClientRect();
+          return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+        },
+        args: [selector]
+      });
+      if (coords) {
+        const res = await chrome.runtime.sendMessage({ type: 'CDP_PHYSICAL_CLICK', tabId: targetTabId, x: coords.x, y: coords.y });
+        if (res && res.success) clickSuccess = true;
       }
     } catch (e) { }
 
     if (!clickSuccess) {
-      await executeInActiveTab((sel) => {
+      await executeInTab(targetTabId, (sel) => {
         const el = document.querySelector(sel);
         if (!el) throw new Error('未找到元素: ' + sel);
         el.click();
         return true;
       }, [selector]);
     }
-    return { success: true };
+    return { success: true, tabId: targetTabId };
   }
 
   if (action === 'type') {
-    const { selector, text, humanLike = true } = data;
+    const { selector, text, humanLike = true, tabId } = data;
     if (!selector) throw new Error('缺少 selector 参数');
 
-    // 优先聚焦元素并滚动至可视区域
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab) throw new Error('未找到活跃标签页。');
+    let targetTabId = tabId;
+    if (!targetTabId) {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab) targetTabId = tab.id;
+    }
+    if (!targetTabId) throw new Error('未找到可用目标标签页。');
 
-    await executeInActiveTab((sel) => {
+    await executeInTab(targetTabId, (sel) => {
       const el = document.querySelector(sel);
       if (!el) throw new Error('未找到输入框: ' + sel);
       el.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -402,7 +443,7 @@ async function handleRemoteAgentAction(action, data = {}) {
       try {
         const cdpRes = await chrome.runtime.sendMessage({
           type: 'CDP_PHYSICAL_TYPE',
-          tabId: tab.id,
+          tabId: targetTabId,
           text: text || ''
         });
         if (cdpRes && cdpRes.success) typedByCdp = true;
@@ -410,7 +451,7 @@ async function handleRemoteAgentAction(action, data = {}) {
     }
 
     if (!typedByCdp) {
-      await executeInActiveTab(async (sel, val, isHuman) => {
+      await executeInTab(targetTabId, async (sel, val, isHuman) => {
         const el = document.querySelector(sel);
         if (!el) throw new Error('未找到输入框: ' + sel);
         el.focus();
@@ -611,14 +652,16 @@ async function handleRemoteAgentAction(action, data = {}) {
   }
 
   if (action === 'screenshot') {
+    const targetTabId = data.tabId;
     // 🌟 借助 CDP DevTools 协议原生硬件缩放截屏 (借鉴自 browser-hands)
     try {
       const res = await chrome.runtime.sendMessage({
         type: 'CDP_CAPTURE_SCREENSHOT',
+        tabId: targetTabId,
         options: { quality: 80, scale: 0.8 }
       });
       if (res && res.success && res.data) {
-        return { dataUrl: res.data.dataUrl, width: res.data.width, height: res.data.height, isNativeCdp: true };
+        return { dataUrl: res.data.dataUrl, width: res.data.width, height: res.data.height, isNativeCdp: true, tabId: targetTabId };
       }
     } catch (e) { }
 
@@ -628,13 +671,13 @@ async function handleRemoteAgentAction(action, data = {}) {
         if (chrome.runtime.lastError || !dataUrl) {
           return reject(new Error(chrome.runtime.lastError ? chrome.runtime.lastError.message : '截图返回为空'));
         }
-        resolve({ dataUrl });
+        resolve({ dataUrl, tabId: targetTabId });
       });
     });
   }
 
   if (action === 'getElements') {
-    return await executeInActiveTab(() => {
+    const fn = () => {
       const items = Array.from(document.querySelectorAll('button, a, input, textarea, select'));
       return items.filter(el => el.offsetHeight > 0 && el.offsetWidth > 0).slice(0, 80).map(el => ({
         tag: el.tagName.toLowerCase(),
@@ -643,7 +686,11 @@ async function handleRemoteAgentAction(action, data = {}) {
         text: (el.innerText || el.value || el.placeholder || '').trim().slice(0, 60),
         selector: el.id ? `#${el.id}` : (el.name ? `${el.tagName.toLowerCase()}[name="${el.name}"]` : null)
       }));
-    });
+    };
+    if (data.tabId) {
+      return await executeInTab(data.tabId, fn);
+    }
+    return await executeInActiveTab(fn);
   }
 
   if (action === 'listTabs') {
