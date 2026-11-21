@@ -1,3 +1,19 @@
+
+async function getTargetTab() {
+  try {
+    const allTabs = await chrome.tabs.query({});
+    const normalTabs = allTabs.filter(t => t.url && !t.url.startsWith("chrome-extension://") && !t.url.startsWith("chrome://"));
+    const activeNormal = normalTabs.find(t => t.active);
+    if (activeNormal) return activeNormal;
+    if (normalTabs.length > 0) return normalTabs[0];
+    const [tab] = await chrome.tabs.query({ active: true });
+    return tab;
+  } catch (e) {
+    const [tab] = await chrome.tabs.query({ active: true });
+    return tab;
+  }
+}
+
 // ==========================================================================
 // ComLinkAI Pro v2.2.0 - 核心侧边栏控制引擎 (Pristine Clean Build)
 // ==========================================================================
@@ -75,7 +91,7 @@ async function loadDirectoryHandle() {
 
 async function executeInActiveTab(func, args = []) {
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tab = await getTargetTab();
     if (!tab || !tab.id) throw new Error('未找到当前活跃标签页');
 
     if (tab.url.startsWith('chrome://') || tab.url.startsWith('edge://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('about:')) {
@@ -123,7 +139,7 @@ async function executeInTab(tabId, func, args = []) {
 
 async function updateActiveTabInfo() {
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tab = await getTargetTab();
     if (!tab) return;
 
     const tabTitle = document.getElementById('tab-title');
@@ -351,7 +367,7 @@ async function handleRemoteAgentAction(action, data = {}) {
     if (!selector) throw new Error('缺少 selector 参数');
     let clickSuccess = false;
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const tab = await getTargetTab();
       if (tab) {
         const [{ result: coords }] = await chrome.scripting.executeScript({
           target: { tabId: tab.id },
@@ -438,7 +454,7 @@ async function handleRemoteAgentAction(action, data = {}) {
         tag: el.tagName.toLowerCase(),
         id: el.id || null,
         name: el.name || null,
-        text: (el.innerText || el.value || el.placeholder || '').trim().slice(0, 60),
+        text: (el.innerText || el.value || el.placeholder || '').trim().slice(0, 60), href: el.href || null,
         selector: el.id ? `#${el.id}` : (el.name ? `${el.tagName.toLowerCase()}[name="${el.name}"]` : null)
       }));
     });
@@ -495,7 +511,7 @@ async function handleRemoteAgentAction(action, data = {}) {
   }
 
   if (action === 'process_active_tab_comment') {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tab = await getTargetTab();
     if (!tab || !tab.id) throw new Error('未找到当前活跃标签页');
 
     const tabData = await fetchActiveTabContent();
@@ -692,7 +708,7 @@ function renderMarkdownPreview(tabData) {
 }
 
 async function fetchActiveTabContent() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const tab = await getTargetTab();
   if (!tab) throw new Error('未检测到打开的活跃网页');
 
   if (!tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('edge://') || tab.url.startsWith('about:')) {
@@ -1513,7 +1529,7 @@ function initBatchWorkbench() {
       let domainVal = inputTargetDomain ? inputTargetDomain.value.trim() : '';
 
       // 智能感知：如果输入框为空，但当前就在 Google 搜索结果页，自动填入搜索词并直接执行抓取
-      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      const activeTab = await getTargetTab();
       if (!domainVal && activeTab && activeTab.url && activeTab.url.includes('google.com/search')) {
         try {
           const u = new URL(activeTab.url);
@@ -1757,7 +1773,7 @@ function initBatchWorkbench() {
         } else if (res && res.submitted) {
           markCurrentTabAsDoneInQueue();
           if (window.publishLogger) {
-            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            const tab = await getTargetTab();
             if (tab) {
               window.publishLogger.logPublish({
                 url: tab.url,
@@ -1845,7 +1861,7 @@ function handleBatchItemActionClick(e) {
 
 // 智能控制 Google 搜索结果页翻页并自动提取新一组 10 条外链
 async function goToGoogleNextPageAndScrape() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const tab = await getTargetTab();
   if (!tab || !tab.id || !tab.url || !tab.url.includes('google.com/search')) {
     alert('请先打开并聚焦在 Google 搜索结果页面！');
     return;
@@ -1901,7 +1917,7 @@ async function goToGoogleNextPageAndScrape() {
 }
 
 async function scrapeGoogleSearchResultsHandler(silent = false) {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const tab = await getTargetTab();
   if (!tab || !tab.id) {
     if (!silent) alert('未检测到活跃标签页，请先在浏览器中切换到 Google 搜索结果页面！');
     return { success: false, error: '未检测到活跃标签页' };
@@ -2094,13 +2110,18 @@ function getCategoryBadge(category) {
 async function openAndFocusUrl(url) {
   if (!url) return;
   try {
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    const allTabs = await chrome.tabs.query({});
+    const normalTabs = allTabs.filter(t => !t.url.startsWith("chrome-extension://") && !t.url.startsWith("chrome://"));
     let targetTabId = null;
-    if (tabs && tabs.length > 0 && tabs[0].id) {
-      targetTabId = tabs[0].id;
-      await chrome.tabs.update(targetTabId, { url: url });
+    const activeNormal = normalTabs.find(t => t.active);
+    if (activeNormal && activeNormal.id) {
+      targetTabId = activeNormal.id;
+      await chrome.tabs.update(targetTabId, { url: url, active: true });
+    } else if (normalTabs.length > 0 && normalTabs[0].id) {
+      targetTabId = normalTabs[0].id;
+      await chrome.tabs.update(targetTabId, { url: url, active: true });
     } else {
-      const newTab = await chrome.tabs.create({ url: url });
+      const newTab = await chrome.tabs.create({ url: url, active: true });
       targetTabId = newTab.id;
     }
 
@@ -2655,7 +2676,7 @@ const autoPilotEngine = {
         return { tabId: res.data.tabId, groupId: res.data.groupId, isolated: true };
       }
     }
-    const [curTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const curTab = await getTargetTab();
     return { tabId: curTab ? curTab.id : null, groupId: null, isolated: false };
   },
 
