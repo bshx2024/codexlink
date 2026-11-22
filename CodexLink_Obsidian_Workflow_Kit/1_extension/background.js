@@ -45,11 +45,15 @@ async function detachCDP(tabId) {
 
 function sendCDPCommand(tabId, method, params = {}) {
   return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      resolve({ timedOut: true });
+    }, 2500);
     chrome.debugger.sendCommand({ tabId }, method, params, (result) => {
+      clearTimeout(timer);
       if (chrome.runtime.lastError) {
-        return reject(new Error(chrome.runtime.lastError.message));
+        return resolve({ error: chrome.runtime.lastError.message });
       }
-      resolve(result);
+      resolve(result || {});
     });
   });
 }

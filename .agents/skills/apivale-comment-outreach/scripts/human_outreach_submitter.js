@@ -131,7 +131,7 @@ function validateOutreachContract(task) {
   if (/https?:\/\/|www\./i.test(comment)) {
     throw new Error(`[合规红线阻断] 评论正文中严禁插入任何超链接 (0 链接原则，纯靠表单原生 Website/URL 留链)！`);
   }
-  if (/at apivale|our api|our platform|our product|cheapest api/i.test(comment)) {
+  if (/\bat apivale\b|\bour api\b|\bour platform\b|\bour product\b|\bcheapest api\b/i.test(comment)) {
     throw new Error(`[合规红线阻断] 评论正文中严禁自报家门 (如 "at APIVALE")，请保持纯同行一线技术交流口吻！`);
   }
 
@@ -184,7 +184,8 @@ async function executeHumanSubmission(task, options = {}) {
 
   // 3. 导航进入页面 (使用专属 tabId 隔离运行)
   console.log('1. [页面进入] 正在导航至目标博文并模拟真实用户深度阅读浏览...');
-  await callAction('navigate', { url: task.pageUrl + '#respond', tabId });
+  const navRes = await callAction('navigate', { url: task.pageUrl + '#respond', tabId });
+  const activeTabId = (navRes && navRes.data && navRes.data.tabId) ? navRes.data.tabId : tabId;
 
   // 强化物理级防封时钟：深度阅读浏览停留 ≥ 16 秒 (规避 Akismet / Turnstile 极速时间戳特征)
   console.log('⏳ [拟人阅读停留] 模拟人类阅读与缓动浏览 (保持 16 秒阅读停留)...');
@@ -197,16 +198,19 @@ async function executeHumanSubmission(task, options = {}) {
     author: task.author,
     email: cleanEmail,
     url: cleanTargetUrl,
-    autoSubmit: false, // 先不自动提交，留出时间截取填写前存证
-    tabId
+    autoSubmit: false,
+    tabId: activeTabId
   });
   console.log('表单填写结果:', JSON.stringify(fillRes));
+  if (!fillRes || fillRes.error || (fillRes.data && !fillRes.data.success)) {
+    throw new Error('表单字段填充失败: ' + (fillRes ? fillRes.error : '插件未响应'));
+  }
 
-  // 5. 抓取预提交截图 (Pre-Submit)
+  // 5. 抓取预提交截图 (Pre-Submit，高亮各字段绿色边框)
   if (saveScreenshot && artifactDir) {
     console.log('3. [存证截屏] 抓取填单完成态截图 (Pre-submit)...');
-    await sleep(600);
-    const snap1 = await callAction('screenshot', { tabId });
+    await sleep(800);
+    const snap1 = await callAction('screenshot', { tabId: activeTabId });
     if (snap1 && snap1.data && snap1.data.dataUrl) {
       const b64 = snap1.data.dataUrl.replace(/^data:image\/\w+;base64,/, '');
       const tag = (task.domain || 'blog').replace(/[^a-zA-Z0-9]/g, '_');
@@ -220,22 +224,36 @@ async function executeHumanSubmission(task, options = {}) {
   console.log(`4. [拟人复核] 模拟人类通读检查 ${reviewPause}ms...`);
   await sleep(reviewPause);
 
-  // 7. 触发 CDP 物理级贝塞尔鼠标点击 (CDP Physical Click with isTrusted === true)
-  console.log('5. [CDP 物理点击] 派发贝塞尔轨迹移动、物理按压 (75~125ms) 与释放...');
+  // 7. 触发提交点击 (优先精准匹配 WordPress 评论专用提交按钮)
+  console.log('5. [物理提交] 派发表单提交按钮物理点击与触发表单提交...');
   const clickRes = await callAction('click', {
-    selector: '#submit, button[type="submit"], input[type="submit"], button.submit, input[name="submit"]',
-    tabId
+    selector: '#comment-submit, #submit, form#commentform input[type="submit"], form#commentform button[type="submit"], input[type="submit"].submit, button[type="submit"].submit, input[name="submit"]',
+    tabId: activeTabId
   });
   console.log('CDP 物理提交结果:', JSON.stringify(clickRes));
+  if (!clickRes || clickRes.error) {
+    throw new Error(`提交按钮点击失败: ${clickRes ? clickRes.error : '未响应'}`);
+  }
 
-  // 8. 等待后台网关响应
-  console.log('6. [等待响应] 等待页面审核响应与跳转处理 (6s)...');
-  await sleep(6000);
+  // 8. 等待后台网关响应与页面刷新加载
+  console.log('6. [等待响应] 等待页面审核响应与跳转处理 (8s)...');
+  await sleep(8000);
 
-  // 9. 抓取提交后存证截图 (Post-Submit)
+  // 9. 智能检测是否出现“待审核中 (awaiting moderation)”或评论已挂载，并将审核态居中滚动
+  console.log('7. [审核态检测] 嗅探页面审核中 (Awaiting Moderation) 标记并对焦视口...');
+  let verifyRes = null;
+  try {
+    verifyRes = await callAction('verify_and_focus_moderation', { tabId: activeTabId });
+    console.log('审核态嗅探结果:', JSON.stringify(verifyRes));
+  } catch (e) {
+    console.warn('审核态嗅探调用异常:', e.message);
+  }
+
+  // 10. 抓取提交后存证截图 (Post-Submit，已精准对焦到待审核区域)
   if (saveScreenshot && artifactDir) {
-    console.log('7. [存证截屏] 抓取提交后审核态截图 (Post-submit)...');
-    const snap2 = await callAction('screenshot', { tabId });
+    console.log('8. [存证截屏] 抓取提交后审核态对焦截图 (Post-submit)...');
+    await sleep(600);
+    const snap2 = await callAction('screenshot', { tabId: activeTabId });
     if (snap2 && snap2.data && snap2.data.dataUrl) {
       const b64 = snap2.data.dataUrl.replace(/^data:image\/\w+;base64,/, '');
       const tag = (task.domain || 'blog').replace(/[^a-zA-Z0-9]/g, '_');
@@ -244,7 +262,7 @@ async function executeHumanSubmission(task, options = {}) {
     }
   }
 
-  const tabRes = await callAction('getActiveTab', { tabId });
+  const tabRes = await callAction('getActiveTab', { tabId: activeTabId });
   const actualTitle = (tabRes && tabRes.data && tabRes.data.title) ? tabRes.data.title : (task.title || '');
   const totalElapsedMs = Date.now() - taskStart;
 
@@ -273,6 +291,13 @@ async function executeHumanSubmission(task, options = {}) {
   const cooldownSeconds = Math.floor(Math.random() * 11) + 15;
   console.log(`⏳ [防封冷却] 开始执行随机冷却抖动 ${cooldownSeconds} 秒，消除机械频次特征...`);
   await sleep(cooldownSeconds * 1000);
+
+  // 12. 善后处理：安全关闭当前任务标签页，释放 Chromium 渲染内存，杜绝进程泄漏
+  try {
+    if (activeTabId) {
+      await callAction('close_tab', { tabId: activeTabId }).catch(() => {});
+    }
+  } catch (e) {}
 
   return {
     success: true,
