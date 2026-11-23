@@ -4,6 +4,7 @@ const readline = require('readline');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const backlinkDb = require('./modules/backlink_db');
 
 // 配置常量
 const PORT = 3010;
@@ -494,6 +495,158 @@ tags:
       }
     });
     return;
+  }
+
+  // ==========================================
+  // 1.8 Backlink Pipeline 6-Table REST API 接口
+  // ==========================================
+  if (req.url.startsWith('/api/backlink/')) {
+    const parsedUrl = new URL(req.url, `http://127.0.0.1:${PORT}`);
+    const pathname = parsedUrl.pathname;
+
+    // GET /api/backlink/stats
+    if (pathname === '/api/backlink/stats' && req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ success: true, stats: backlinkDb.getStats() }));
+      return;
+    }
+
+    // GET /api/backlink/targets
+    if (pathname === '/api/backlink/targets' && req.method === 'GET') {
+      const status = parsedUrl.searchParams.get('status') || undefined;
+      const limit = parseInt(parsedUrl.searchParams.get('limit') || '50', 10);
+      const offset = parseInt(parsedUrl.searchParams.get('offset') || '0', 10);
+      const targets = backlinkDb.listTargets({ status, limit, offset });
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ success: true, count: targets.length, targets }));
+      return;
+    }
+
+    // POST /api/backlink/claim
+    if (pathname === '/api/backlink/claim' && req.method === 'POST') {
+      let body = '';
+      req.on('data', chunk => { body += chunk.toString(); });
+      req.on('end', () => {
+        try {
+          const { limit = 1, claimedBy = 'autopilot' } = JSON.parse(body || '{}');
+          const claimed = backlinkDb.claimNextTargets(limit, claimedBy);
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ success: true, count: claimed.length, items: claimed }));
+        } catch (e) {
+          res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ success: false, error: e.message }));
+        }
+      });
+      return;
+    }
+
+    // POST /api/backlink/success
+    if (pathname === '/api/backlink/success' && req.method === 'POST') {
+      let body = '';
+      req.on('data', chunk => { body += chunk.toString(); });
+      req.on('end', () => {
+        try {
+          const payload = JSON.parse(body || '{}');
+          const { targetId, ...data } = payload;
+          if (!targetId) throw new Error('缺少 targetId');
+          const record = backlinkDb.recordSuccess(targetId, data);
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ success: true, record }));
+        } catch (e) {
+          res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ success: false, error: e.message }));
+        }
+      });
+      return;
+    }
+
+    // POST /api/backlink/probe
+    if (pathname === '/api/backlink/probe' && req.method === 'POST') {
+      let body = '';
+      req.on('data', chunk => { body += chunk.toString(); });
+      req.on('end', () => {
+        try {
+          const payload = JSON.parse(body || '{}');
+          const { targetId, ...data } = payload;
+          if (!targetId) throw new Error('缺少 targetId');
+          const record = backlinkDb.recordProbe(targetId, data);
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ success: true, record }));
+        } catch (e) {
+          res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ success: false, error: e.message }));
+        }
+      });
+      return;
+    }
+
+    // GET /api/backlink/probes
+    if (pathname === '/api/backlink/probes' && req.method === 'GET') {
+      const probe_mode = parsedUrl.searchParams.get('probe_mode') || undefined;
+      const limit = parseInt(parsedUrl.searchParams.get('limit') || '50', 10);
+      const offset = parseInt(parsedUrl.searchParams.get('offset') || '0', 10);
+      const probes = backlinkDb.listProbes({ probe_mode, limit, offset });
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ success: true, count: probes.length, probes }));
+      return;
+    }
+
+    // GET /api/backlink/success-list
+    if (pathname === '/api/backlink/success-list' && req.method === 'GET') {
+      const listed_status = parsedUrl.searchParams.get('listed_status') || undefined;
+      const limit = parseInt(parsedUrl.searchParams.get('limit') || '50', 10);
+      const offset = parseInt(parsedUrl.searchParams.get('offset') || '0', 10);
+      const list = backlinkDb.listSuccess({ listed_status, limit, offset });
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ success: true, count: list.length, list }));
+      return;
+    }
+
+    // POST /api/backlink/ingest-targets
+    if (pathname === '/api/backlink/ingest-targets' && req.method === 'POST') {
+      let body = '';
+      req.on('data', chunk => { body += chunk.toString(); });
+      req.on('end', () => {
+        try {
+          const { targets = [] } = JSON.parse(body || '{}');
+          const result = backlinkDb.addReferrerTargets(targets);
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ success: true, ...result }));
+        } catch (e) {
+          res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ success: false, error: e.message }));
+        }
+      });
+      return;
+    }
+
+    // POST /api/backlink/knowledge
+    if (pathname === '/api/backlink/knowledge' && req.method === 'POST') {
+      let body = '';
+      req.on('data', chunk => { body += chunk.toString(); });
+      req.on('end', () => {
+        try {
+          const item = JSON.parse(body || '{}');
+          const saved = backlinkDb.saveKnowledge(item);
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ success: true, saved }));
+        } catch (e) {
+          res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ success: false, error: e.message }));
+        }
+      });
+      return;
+    }
+
+    // GET /api/backlink/knowledge
+    if (pathname === '/api/backlink/knowledge' && req.method === 'GET') {
+      const kind = parsedUrl.searchParams.get('kind') || undefined;
+      const item_key = parsedUrl.searchParams.get('item_key') || undefined;
+      const item = backlinkDb.getKnowledge(kind, item_key);
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ success: true, item }));
+      return;
+    }
   }
 
   // 404

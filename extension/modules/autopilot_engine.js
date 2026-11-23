@@ -371,16 +371,33 @@ class AutopilotEngine {
 
       if (status === 'critical_error' || status === 'login_required') {
         this.stats.failedCount++;
+        const reason = status === 'login_required' ? '须登录' : 'PHP崩溃';
+        this.recordProbe(item, {
+          reason,
+          mode: status === 'login_required' ? 'form' : 'dead',
+          hasForm: status === 'login_required'
+        });
         if (window.publishLogger) {
-          window.publishLogger.logAction({ url: item.url, domain: item.domain, title: item.title, status: 'failed', reason: status === 'login_required' ? '须登录' : 'PHP崩溃' });
+          window.publishLogger.logAction({ url: item.url, domain: item.domain, title: item.title, status: 'failed', reason });
         }
-        this.notifyStateChange(`⚠️ [${item.domain}] ${status === 'login_required' ? '🔒 要求必须登录' : '🔴 PHP崩溃'}，自动跳过...`);
+        this.notifyStateChange(`⚠️ [${item.domain}] ${status === 'login_required' ? '🔒 要求必须登录' : '🔴 PHP崩溃'}，已存入探针池并跳过...`);
         this.advanceToNextItem();
         return;
       }
 
       if (status === 'captcha_protected') {
         this.startCaptchaTimeout(item);
+        return;
+      }
+
+      if (status === 'no_form') {
+        this.stats.failedCount++;
+        this.recordProbe(item, { reason: '未找到评论输入框', mode: 'none', hasForm: false });
+        if (window.publishLogger) {
+          window.publishLogger.logAction({ url: item.url, domain: item.domain, title: item.title, status: 'failed', reason: '无评论表单' });
+        }
+        this.notifyStateChange(`⚠️ [${item.domain}] 未找到有效评论表单，已存入探针池并跳过...`);
+        this.advanceToNextItem();
         return;
       }
 
@@ -542,6 +559,7 @@ class AutopilotEngine {
         } catch (e) {}
 
         this.stats.successCount++;
+        this.recordSuccess(item, { comment: commentText, verifyStatus });
         if (window.publishLogger) {
           window.publishLogger.logAction({
             url: item.url,
@@ -581,6 +599,7 @@ class AutopilotEngine {
         clearInterval(this.activeTimers.captchaTimer);
         this.activeTimers.captchaTimer = null;
         this.stats.captchaSkipped++;
+        this.recordProbe(item, { reason: '遇 Captcha 验证码超时自动跳过', mode: 'captcha', hasCaptcha: true });
         if (window.publishLogger) {
           window.publishLogger.logAction({
             url: item.url, domain: item.domain, title: item.title, status: 'skipped', reason: '遇 Captcha 验证码超时自动跳过'
@@ -743,6 +762,92 @@ ${includeBrandInText
     }
 
     return { commentText, relevanceScore };
+  }
+
+  /**
+   * 向本地 6-Table 管道服务异步同步成果或探针 (支持静默降级)
+   */
+  async syncToBacklinkServer(endpoint, payload) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2000);
+      await fetch(`http://127.0.0.1:3010/api/backlink/${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+    } catch (e) {
+      // 本地服务未启动或断网时静默跳过，绝不阻断前端主流程
+    }
+  }
+
+  /**
+   * 记录探针复检池 (Probe Resilience Pool)
+   */
+  async recordProbe(item, { reason, mode, hasCaptcha = false, hasForm = false }) {
+    await this.syncToBacklinkServer('probe', {
+      targetId: item.targetId || item.id,
+      target_domain: item.domain,
+      link_page_url: item.url,
+      skip_reason: reason,
+      probe_mode: mode || 'form',
+      has_captcha: hasCaptcha,
+      has_form: hasForm
+    });
+  }
+
+  /**
+   * 记录成功成果库 (Referrer Success)
+   */
+  async recordSuccess(item, { comment, verifyStatus }) {
+    await this.syncToBacklinkServer('success', {
+      targetId: item.targetId || item.id,
+      target_domain: item.domain,
+      submit_entry_url: item.url,
+      submit_method: 'form',
+      listed_status: verifyStatus === 'duplicate' ? 'rejected' : 'pending_review',
+      notes: comment ? comment.slice(0, 200) : ''
+    });
+  }
+
+  /**
+   * 支持从 6-Table referrer_targets 队列直接领单启动
+   */
+  async startFromPipeline(limit = 10) {
+    this.state = 'RUNNING';
+    this.currentIndex = 0;
+    this.stats = { totalProcessed: 0, successCount: 0, captchaSkipped: 0, failedCount: 0, timeoutCount: 0 };
+    this.notifyStateChange('🚀 正在从 6-Table 管道领取待发外链任务...');
+
+    try {
+      const resp = await fetch(`http://127.0.0.1:3010/api/backlink/claim`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ limit, claimedBy: 'comlinkai-extension' })
+      });
+      const data = await resp.json();
+      if (data.success && data.items && data.items.length > 0) {
+        this.batchQueue = data.items.map(t => ({
+          id: t.id,
+          targetId: t.id,
+          url: t.link_page_url,
+          domain: t.target_domain,
+          title: t.anchor_text || t.target_domain
+        }));
+        this.notifyStateChange(`🎉 成功领单 ${this.batchQueue.length} 条高确定性外链目标，开启链式发布...`);
+        await this.ensureWorkerTabAndProcess();
+        return;
+      } else {
+        this.notifyStateChange('⚠️ 管道中暂无待发外链任务，请先执行外链收集流水线。');
+        this.state = 'IDLE';
+      }
+    } catch (e) {
+      console.warn('[Autopilot] 从服务端领单失败:', e.message);
+      this.notifyStateChange(`🔴 领单连接失败: ${e.message}`);
+      this.state = 'IDLE';
+    }
   }
 }
 

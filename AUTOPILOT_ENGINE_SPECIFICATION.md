@@ -140,3 +140,34 @@
 * **解决方案**：在 `GoogleSheetsSync` 模块内引入本地持久化离线重试队列（`comlinkai_gsheet_retry_queue`）：
   - 遇到网络异常或服务端报错时，数据自动入库持久化；
   - 下一次成功请求或空闲时，自动启动带有 400ms 限流保护的渐进式补发机制，保障 100% 零数据丢失。
+
+---
+
+## 9. v2.5 工业级升维：6-Table 架构、dev.to + DataForSEO 交叉反查与探针复检池 (Probe Resilience Pool)
+
+借鉴刘小排（Raphael AI 200 万月访问量实战）的核心方法论，ComLinkAI 在 v2.5 实现了底层外链架构的工业级重构：
+
+### 9.1 三角色架构解耦 (Role-based Separation)
+* **外链总管 (Orchestrator)**：驻留在本地 Bridge 服务 (`server/index.js`)，管理任务状态机、并发锁与调度对账，对外暴露 REST 接口 (`/api/backlink/*`)。
+* **外链收集者 (Collector)**：通过 `scripts/collector_devto_dataforseo.js` 异步执行 dev.to 深度爬取与 DataForSEO 多维交叉反查，持续向任务队列补弹。
+* **外链执行者 (Sender / Extension)**：`AutopilotEngine` 专注无痕后台执行，原子领单（`claimed_by`）、表单探测、CDP 硬件缩放截屏留证，并向成果库与探针池分流回写。
+
+### 9.2 6 张核心共享表规范 (6-Table Architecture)
+1. **`devto_outbound_links`**：文章原始出站链接流水总表，标记 `is_social`、`is_directory` 与候选标记。
+2. **`ai_tool_sites`**：启发式清洗后的独立 AI & SaaS 种子清单（排重唯一根域名，作为交叉反查公约数）。
+3. **`referrer_targets`**：外链任务主队列（状态机：`pending` $\rightarrow$ `sending` $\rightarrow$ `sent` / `failed` / `skipped`，具备 `claimed_by` 排它锁与防重复机制）。
+4. **`referrer_success`**：长期收录成果库（记录 `listed_status` 审核跟踪、证据回执截图路径 `evidence_path`，供 7~14 天后自动巡检收录）。
+5. **`referrer_probes`**：探针复检池（集中管理跳过的站点，分类记录 `probe_mode`、`skip_reason`、`has_form`、`has_captcha`，留待二轮强模型攻坚）。
+6. **`site_knowledge`**：产品资产知识库（严格按 `profile` / `screenshot` / `submit_kit` 归档，存放 1200×737 官网各路由实拍整屏图与多语言文案）。
+
+### 9.3 dev.to + DataForSEO 交叉反查策略 (Domain Intersection)
+* **核心公约数算法**：若单一平台同时给 3 家以上互不相属的独立 AI 工具站提供入站外链（$\text{Citation Count} \ge 3$），该平台 100% 具备开放提交、行业工具目录或允许评论的通道。
+* **执行命令**：
+  ```powershell
+  # 运行收集流水线 (支持 --pages 指定抓取深度)
+  node scripts/collector_devto_dataforseo.js --pages 3
+  ```
+
+### 9.4 探针复检池 (Probe Resilience Pool) 闭环消费机制
+* 遇到验证码超时（`captcha_protected`）、必须登录（`login_required`）、页面无表单（`no_form`）或 WAF 拦截时，引擎不再粗暴判定为整体失败，而是自动将上下文注入 `referrer_probes` 表；
+* 探针池保留了原始落地页与特征信息，既保证主循环 24 小时丝滑无人值守，又为后续换用多模态大模型攻坚或人工集中批量处理沉淀了高价值资产。
