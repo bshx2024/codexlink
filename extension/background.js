@@ -255,57 +255,60 @@ async function cdpCaptureScaledScreenshot(tabId, options = {}) {
 }
 
 // --------------------------------------------------------------------------
-// 3. Chrome 标签组（Tab Groups）隔离机制 (借鉴自 browser-hands 并发底座)
+// 3. Chrome 标签组（Tab Groups）多任务隔离池 (工业级多任务并发底座)
 // --------------------------------------------------------------------------
-const AUTOPILOT_GROUP_TITLE = '🤖 ComLinkAI Auto-Pilot';
-let autoPilotSession = {
-  groupId: null,
-  tabId: null,
-  windowId: null,
-  status: 'idle'
-};
+const AUTOPILOT_COLORS = ['cyan', 'blue', 'green', 'purple', 'orange', 'yellow', 'pink', 'red'];
+let groupColorIdx = 0;
+// 多任务实例池: Map<sessionId, { sessionId, groupId, tabId, windowId, taskName, color, status }>
+const autoPilotSessions = new Map();
 
-async function getOrCreateAutoPilotGroup(initialUrl = 'about:blank') {
-  // 1. 尝试查找已存在的 Auto-Pilot 标签组
-  if (chrome.tabGroups && chrome.tabGroups.query) {
+async function getOrCreateAutoPilotGroup(initialUrl = 'about:blank', sessionId = null, taskName = 'Auto-Pilot') {
+  const sid = sessionId || `task_${Date.now()}`;
+
+  // 1. 若已有该 session 的专属记录且标签页仍然存活
+  if (autoPilotSessions.has(sid)) {
+    const sess = autoPilotSessions.get(sid);
     try {
-      const groups = await chrome.tabGroups.query({});
-      const existing = groups.find(g => (g.title || '').includes('ComLinkAI Auto-Pilot'));
-      if (existing) {
-        autoPilotSession.groupId = existing.id;
-        autoPilotSession.windowId = existing.windowId;
-        // 查找组内的标签页
-        const tabs = await chrome.tabs.query({ groupId: existing.id });
-        if (tabs && tabs.length > 0) {
-          autoPilotSession.tabId = tabs[0].id;
-          return { ...autoPilotSession, tab: tabs[0] };
-        }
+      const tab = await chrome.tabs.get(sess.tabId);
+      if (tab) {
+        return { ...sess, tab };
       }
     } catch (e) {
-      console.warn('[ComLinkAI] 查询现有 tabGroup 失败:', e);
+      autoPilotSessions.delete(sid);
     }
   }
 
-  // 2. 如果不存在组或组内无标签，新建一个后台隔离标签
+  // 2. 新建后台专属隔离标签 (active: false，绝不抢占用户当前视窗与焦点！)
   const newTab = await chrome.tabs.create({
     url: initialUrl,
-    active: false // 保持后台运行，不抢占用户当前视窗！
+    active: false
   });
-  autoPilotSession.tabId = newTab.id;
-  autoPilotSession.windowId = newTab.windowId;
 
-  // 3. 将其归并入专属标签组
+  const assignedColor = AUTOPILOT_COLORS[groupColorIdx++ % AUTOPILOT_COLORS.length];
+  const newSession = {
+    sessionId: sid,
+    tabId: newTab.id,
+    windowId: newTab.windowId,
+    groupId: null,
+    taskName: taskName,
+    color: assignedColor,
+    status: 'ready'
+  };
+
+  registerTabWatchdog(newTab.id);
+
+  // 3. 专属彩色标签组绑定与重命名
   if (chrome.tabs.group) {
     try {
       const groupId = await chrome.tabs.group({
         tabIds: [newTab.id],
         createProperties: { windowId: newTab.windowId }
       });
-      autoPilotSession.groupId = groupId;
+      newSession.groupId = groupId;
       if (chrome.tabGroups && chrome.tabGroups.update) {
         await chrome.tabGroups.update(groupId, {
-          title: `${AUTOPILOT_GROUP_TITLE} [就绪]`,
-          color: 'cyan',
+          title: `🤖 [${taskName}] [就绪]`,
+          color: assignedColor,
           collapsed: false
         });
       }
@@ -314,15 +317,20 @@ async function getOrCreateAutoPilotGroup(initialUrl = 'about:blank') {
     }
   }
 
-  return { ...autoPilotSession, tab: newTab };
+  autoPilotSessions.set(sid, newSession);
+  return { ...newSession, tab: newTab };
 }
 
-async function updateAutoPilotGroupStatus(statusText, color = 'cyan') {
-  if (autoPilotSession.groupId && chrome.tabGroups && chrome.tabGroups.update) {
+async function updateAutoPilotGroupStatus(statusText, color = null, sessionId = null) {
+  const sid = sessionId || Array.from(autoPilotSessions.keys())[0];
+  if (!sid || !autoPilotSessions.has(sid)) return;
+
+  const sess = autoPilotSessions.get(sid);
+  if (sess && sess.groupId && chrome.tabGroups && chrome.tabGroups.update) {
     try {
-      await chrome.tabGroups.update(autoPilotSession.groupId, {
-        title: `${AUTOPILOT_GROUP_TITLE} [${statusText}]`,
-        color: color
+      await chrome.tabGroups.update(sess.groupId, {
+        title: `🤖 [${sess.taskName || 'Auto-Pilot'}] [${statusText}]`,
+        color: color || sess.color || 'cyan'
       });
     } catch (e) {}
   }
@@ -387,19 +395,27 @@ chrome.tabs.onRemoved.addListener((closedTabId) => {
   if (attachedTabs.has(closedTabId)) {
     attachedTabs.delete(closedTabId);
   }
-  if (autoPilotSession.tabId === closedTabId) {
-    autoPilotSession.tabId = null;
+  for (const [sid, sess] of autoPilotSessions.entries()) {
+    if (sess.tabId === closedTabId) {
+      autoPilotSessions.delete(sid);
+      break;
+    }
   }
 });
 
-// 若 Auto-Pilot 标签弹出了子页面，自动吸纳进同一隔离组
+// 若任务标签弹出了子页面 (弹窗/新窗口)，自动吸纳进对应任务的专属隔离组
 chrome.tabs.onCreated.addListener(async (tab) => {
-  if (tab.openerTabId && tab.openerTabId === autoPilotSession.tabId && autoPilotSession.groupId) {
-    try {
-      if (chrome.tabs.group) {
-        await chrome.tabs.group({ tabIds: [tab.id], groupId: autoPilotSession.groupId });
+  if (tab.openerTabId) {
+    for (const [sid, sess] of autoPilotSessions.entries()) {
+      if (sess.tabId === tab.openerTabId && sess.groupId) {
+        try {
+          if (chrome.tabs.group) {
+            await chrome.tabs.group({ tabIds: [tab.id], groupId: sess.groupId });
+          }
+        } catch (e) {}
+        break;
       }
-    } catch (e) {}
+    }
   }
 });
 
@@ -531,11 +547,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  // 4.5 🌟 Auto-Pilot 专属隔离标签组管理接口
+  // 4.5 🌟 Auto-Pilot 专属隔离标签组管理接口 (支持多任务实例池与专属标签页)
   if (message.type === 'AUTOPILOT_GET_GROUP') {
     (async () => {
       try {
-        const session = await getOrCreateAutoPilotGroup(message.url || 'about:blank');
+        const session = await getOrCreateAutoPilotGroup(
+          message.url || 'about:blank',
+          message.sessionId || null,
+          message.taskName || 'Auto-Pilot'
+        );
         sendResponse({ success: true, data: session });
       } catch (err) {
         sendResponse({ success: false, error: err.message });
@@ -547,7 +567,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'AUTOPILOT_SET_STATUS') {
     (async () => {
       try {
-        await updateAutoPilotGroupStatus(message.statusText, message.color);
+        await updateAutoPilotGroupStatus(message.statusText, message.color, message.sessionId);
         sendResponse({ success: true });
       } catch (err) {
         sendResponse({ success: false, error: err.message });
@@ -556,16 +576,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  // 4.5.1 🌟 人类主动聚焦查看指定任务专属标签页 (绝不自动偷切焦点)
   if (message.type === 'AUTOPILOT_FOCUS_TAB') {
     (async () => {
       try {
-        if (autoPilotSession.tabId) {
-          await chrome.tabs.update(autoPilotSession.tabId, { active: true });
-          if (autoPilotSession.windowId) {
-            await chrome.windows.update(autoPilotSession.windowId, { focused: true });
+        let targetTabId = message.tabId;
+        if (!targetTabId && message.sessionId && autoPilotSessions.has(message.sessionId)) {
+          targetTabId = autoPilotSessions.get(message.sessionId).tabId;
+        }
+        if (!targetTabId && autoPilotSessions.size > 0) {
+          const first = autoPilotSessions.values().next().value;
+          if (first) targetTabId = first.tabId;
+        }
+        if (targetTabId) {
+          await chrome.tabs.update(targetTabId, { active: true });
+          const t = await chrome.tabs.get(targetTabId).catch(() => null);
+          if (t && t.windowId) {
+            await chrome.windows.update(t.windowId, { focused: true }).catch(() => {});
           }
         }
-        sendResponse({ success: true });
+        sendResponse({ success: true, tabId: targetTabId });
       } catch (err) {
         sendResponse({ success: false, error: err.message });
       }

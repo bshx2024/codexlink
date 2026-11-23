@@ -74,8 +74,9 @@ class AutopilotEngine {
       this.workerTabId = null;
     }
 
+    // 终止时不强制抢占前台焦点，尊重用户正在进行的工作
     if (this.googleTabId) {
-      try { await chrome.tabs.update(this.googleTabId, { active: true }); } catch (e) {}
+      // 保持安静，不强制切换 active
     }
 
     this.notifyStateChange(`⏹️ 全自动发布已终止 (${reason})`);
@@ -214,7 +215,7 @@ class AutopilotEngine {
   }
 
   /**
-   * 确保唯一的 Worker Tab 建立并置顶
+   * 确保专属 Worker Tab 建立并加入独立标签组 (active: false，绝不抢占当前窗口焦点)
    */
   async ensureWorkerTabAndProcess() {
     if (this.state !== 'RUNNING') return;
@@ -223,29 +224,45 @@ class AutopilotEngine {
     if (!firstItem) return;
 
     if (!this.workerTabId) {
-      const tab = await chrome.tabs.create({ url: firstItem.url, active: true });
+      // 🌟 工业级最佳实践：创建专属独立标签页，active: false 零焦点抢占！
+      const tab = await chrome.tabs.create({ url: firstItem.url, active: false });
       this.workerTabId = tab.id;
+
+      // 🌟 Chrome 专属彩色标签组绑定
+      if (chrome.tabs.group) {
+        try {
+          const groupId = await chrome.tabs.group({ tabIds: [tab.id] });
+          this.groupId = groupId;
+          if (chrome.tabGroups && chrome.tabGroups.update) {
+            await chrome.tabGroups.update(groupId, {
+              title: `🤖 [${this.options.taskName || 'Auto-Pilot'}] [${this.currentIndex + 1}/${this.batchQueue.length}]`,
+              color: this.options.groupColor || 'blue',
+              collapsed: false
+            });
+          }
+        } catch (e) {
+          console.warn('[Autopilot] 标签分组失败，降级为独立标签页运行:', e);
+        }
+      }
     } else {
-      await chrome.tabs.update(this.workerTabId, { url: firstItem.url, active: true });
+      // 任务推进仅在专属 TabId 内更新，绝不附加 active: true
+      await chrome.tabs.update(this.workerTabId, { url: firstItem.url });
     }
 
     this.processCurrentItem();
   }
 
   /**
-   * 在单 Worker Tab 内链式处理当前资源项
+   * 在专属 Worker Tab 内链式处理当前资源项 (零焦点抢占)
    */
   async processCurrentItem() {
     if (this.state !== 'RUNNING') return;
 
     if (this.currentIndex >= this.batchQueue.length) {
-      this.notifyStateChange(`✅ 第 ${this.googlePageIndex} 页 10 条资源全部处理完毕！准备关闭 Worker Tab 并翻页...`);
+      this.notifyStateChange(`✅ 第 ${this.googlePageIndex} 页 10 条资源全部处理完毕！准备关闭专属 Worker Tab 并翻页...`);
       if (this.workerTabId) {
         try { await chrome.tabs.remove(this.workerTabId); } catch (e) {}
         this.workerTabId = null;
-      }
-      if (this.googleTabId) {
-        try { await chrome.tabs.update(this.googleTabId, { active: true }); } catch (e) {}
       }
       await this.clickGoogleNextPage();
       return;
@@ -269,15 +286,29 @@ class AutopilotEngine {
       this.advanceToNextItem();
     }, this.options.pageLoadTimeoutMs);
 
-    // 更新 Tab URL (若不是首次打开)
+    // 更新专属 Tab URL (若不是首次打开，纯后台 update，绝不切前台)
     if (this.currentIndex > 0 && this.workerTabId) {
       try {
-        await chrome.tabs.update(this.workerTabId, { url: item.url, active: true });
+        await chrome.tabs.update(this.workerTabId, { url: item.url });
       } catch (e) {
-        // 若 workerTabId 不慎关闭，重新建立
-        const tab = await chrome.tabs.create({ url: item.url, active: true });
+        // 若 workerTabId 不慎关闭，重新建立专属后台标签页
+        const tab = await chrome.tabs.create({ url: item.url, active: false });
         this.workerTabId = tab.id;
+        if (this.groupId && chrome.tabs.group) {
+          try {
+            await chrome.tabs.group({ tabIds: [tab.id], groupId: this.groupId });
+          } catch (ge) {}
+        }
       }
+    }
+
+    // 更新标签组标题显示当前进度
+    if (this.groupId && chrome.tabGroups && chrome.tabGroups.update) {
+      try {
+        await chrome.tabGroups.update(this.groupId, {
+          title: `🤖 [${this.options.taskName || 'Auto-Pilot'}] [${this.currentIndex + 1}/${this.batchQueue.length}]`
+        });
+      } catch (e) {}
     }
 
     // 监听页面 complete 状态
@@ -290,6 +321,21 @@ class AutopilotEngine {
     };
 
     chrome.tabs.onUpdated.addListener(onLoaded);
+  }
+
+  /**
+   * 🌟 允许用户主动高亮聚焦查看此任务专属标签页 (由人类意愿触发，绝不程序偷切)
+   */
+  async focusWorkerTab() {
+    if (this.workerTabId) {
+      try {
+        await chrome.tabs.update(this.workerTabId, { active: true });
+        const t = await chrome.tabs.get(this.workerTabId).catch(() => null);
+        if (t && t.windowId) {
+          await chrome.windows.update(t.windowId, { focused: true }).catch(() => {});
+        }
+      } catch (e) {}
+    }
   }
 
   /**

@@ -335,11 +335,37 @@ function updateUIStatus(status, detailText = '') {
 // 统一分发来自 AI Agent (MCP/WebSocket/REST) 的浏览器操控指令
 // --------------------------------------------------------------------------
 async function handleRemoteAgentAction(action, data = {}) {
-  // 静默创建后台隔离标签页
+  // 静默创建后台隔离标签页 (支持按 sessionId 绑定专属彩色标签组，零抢焦)
   if (action === 'create_tab') {
-    const { url = 'about:blank' } = data;
+    const { url = 'about:blank', sessionId, taskName } = data;
+    if (sessionId || taskName) {
+      try {
+        const res = await chrome.runtime.sendMessage({
+          type: 'AUTOPILOT_GET_GROUP',
+          url,
+          sessionId: sessionId || `task_${Date.now()}`,
+          taskName: taskName || 'Auto-Pilot'
+        });
+        if (res && res.success && res.data) {
+          return { success: true, tabId: res.data.tabId, groupId: res.data.groupId, sessionId: res.data.sessionId };
+        }
+      } catch (e) {
+        console.warn('[ComLinkAI] AUTOPILOT_GET_GROUP 降级为直接后台创建:', e);
+      }
+    }
     const newTab = await chrome.tabs.create({ url, active: false });
     return { success: true, tabId: newTab.id };
+  }
+
+  // 主动聚焦查看标签页 (仅由用户主动点击或明确调用触发)
+  if (action === 'focus_tab') {
+    const { tabId, sessionId } = data;
+    const res = await chrome.runtime.sendMessage({
+      type: 'AUTOPILOT_FOCUS_TAB',
+      tabId,
+      sessionId
+    });
+    return res || { success: true };
   }
 
   // 安全销毁指定标签页
@@ -2106,7 +2132,7 @@ function handleBatchItemActionClick(e) {
     const rawUrl = btn.getAttribute('data-url');
     if (rawUrl) {
       const url = decodeURIComponent(rawUrl);
-      openAndFocusUrl(url);
+      openAndFocusUrl(url, { makeActive: true });
     }
   } else if (action === 'toggle-status') {
     const idx = parseInt(btn.getAttribute('data-index') || '-1', 10);
@@ -2373,17 +2399,22 @@ function getCategoryBadge(category) {
 }
 
 // 供标签页导航的核心跳转函数 (支持当前标签更新或新标签打开，并自动模拟人类平滑滚动至评论区)
-async function openAndFocusUrl(url) {
+async function openAndFocusUrl(url, options = {}) {
   if (!url) return;
+  const makeActive = options.makeActive !== undefined ? options.makeActive : false;
   try {
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    let targetTabId = null;
-    if (tabs && tabs.length > 0 && tabs[0].id) {
-      targetTabId = tabs[0].id;
-      await chrome.tabs.update(targetTabId, { url: url });
+    let targetTabId = options.tabId || null;
+    if (!targetTabId) {
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tabs && tabs.length > 0 && tabs[0].id) {
+        targetTabId = tabs[0].id;
+        await chrome.tabs.update(targetTabId, { url: url, active: makeActive });
+      } else {
+        const newTab = await chrome.tabs.create({ url: url, active: makeActive });
+        targetTabId = newTab.id;
+      }
     } else {
-      const newTab = await chrome.tabs.create({ url: url });
-      targetTabId = newTab.id;
+      await chrome.tabs.update(targetTabId, { url: url, active: makeActive });
     }
 
     setTimeout(updateActiveTabInfo, 500);
@@ -2392,12 +2423,14 @@ async function openAndFocusUrl(url) {
     if (targetTabId) {
       scheduleHumanScrollToComment(targetTabId);
     }
+    return targetTabId;
   } catch (e) {
-    console.warn('[ComLinkAI] chrome.tabs.update 失败，使用 chrome.tabs.create 兜底:', e);
+    console.warn('[ComLinkAI] openAndFocusUrl 异常，使用 chrome.tabs.create 兜底:', e);
     try {
-      const newTab = await chrome.tabs.create({ url: url });
+      const newTab = await chrome.tabs.create({ url: url, active: options.makeActive || false });
       if (newTab && newTab.id) {
         scheduleHumanScrollToComment(newTab.id);
+        return newTab.id;
       }
     } catch (err) {
       window.open(url, '_blank');
@@ -2929,7 +2962,9 @@ const autoPilotEngine = {
     if (isIsolate) {
       const res = await chrome.runtime.sendMessage({
         type: 'AUTOPILOT_GET_GROUP',
-        url: targetUrl
+        url: targetUrl,
+        sessionId: 'sidepanel_autopilot',
+        taskName: '外链挂机'
       });
       if (res && res.success && res.data) {
         this.activeTabId = res.data.tabId;
@@ -2945,9 +2980,27 @@ const autoPilotEngine = {
     if (this.activeGroupId) {
       await chrome.runtime.sendMessage({
         type: 'AUTOPILOT_SET_STATUS',
+        sessionId: 'sidepanel_autopilot',
         statusText,
         color
       }).catch(() => { });
+    }
+  },
+
+  async focusTab() {
+    if (this.activeTabId) {
+      await chrome.runtime.sendMessage({
+        type: 'AUTOPILOT_FOCUS_TAB',
+        tabId: this.activeTabId,
+        sessionId: 'sidepanel_autopilot'
+      }).catch(() => { });
+    }
+  },
+
+  updateFocusButton(visible) {
+    const btnFocus = document.getElementById('btn-autopilot-focus');
+    if (btnFocus) {
+      btnFocus.style.display = visible ? 'inline-block' : 'none';
     }
   },
 
@@ -2958,6 +3011,7 @@ const autoPilotEngine = {
       this.log('已手动解除暂停，恢复挂机流水线', 'info');
       this.updateGroupStatus('挂机中', 'cyan');
       this.updateButtons();
+      this.updateFocusButton(true);
       return;
     }
 
@@ -2972,6 +3026,7 @@ const autoPilotEngine = {
     this.abort = false;
     this.consecutiveErrors = 0;
     this.updateButtons();
+    this.updateFocusButton(true);
     this.log(`🚀 Auto-Pilot 引擎启动！待处理外链: ${pendingItems.length} 条 (已启用 Chrome 标签组隔离并发)`, 'success');
     await this.updateGroupStatus('挂机启动', 'cyan');
 
@@ -2985,6 +3040,7 @@ const autoPilotEngine = {
     this.log('挂机已手动暂停', 'warn');
     this.updateGroupStatus('已暂停', 'yellow');
     this.updateButtons();
+    this.updateFocusButton(true);
   },
 
   stop() {
@@ -2996,6 +3052,7 @@ const autoPilotEngine = {
     this.log('挂机已终止', 'warn');
     this.updateGroupStatus('已停止', 'red');
     this.updateButtons();
+    this.updateFocusButton(false);
   },
 
   updateButtons() {
@@ -3185,6 +3242,7 @@ function initAutoPilotEngineUI() {
   const btnStart = document.getElementById('btn-autopilot-start');
   const btnPause = document.getElementById('btn-autopilot-pause');
   const btnStop = document.getElementById('btn-autopilot-stop');
+  const btnFocus = document.getElementById('btn-autopilot-focus');
 
   if (btnStart) {
     btnStart.addEventListener('click', () => autoPilotEngine.start());
@@ -3194,6 +3252,9 @@ function initAutoPilotEngineUI() {
   }
   if (btnStop) {
     btnStop.addEventListener('click', () => autoPilotEngine.stop());
+  }
+  if (btnFocus) {
+    btnFocus.addEventListener('click', () => autoPilotEngine.focusTab());
   }
 }
 
