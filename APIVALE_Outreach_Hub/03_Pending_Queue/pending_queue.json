@@ -5,11 +5,12 @@
     "domain": "saashub.com",
     "category": "directory",
     "priority": "P0",
-    "status": "pending",
+    "status": "published",
     "landing_page": "https://apivale.com/",
     "author_persona": "APIVALE Official",
     "email": "support@apivale.com",
-    "keyword": "OpenRouter / LiteLLM Alternative"
+    "keyword": "OpenRouter / LiteLLM Alternative",
+    "publishedAt": "2026-11-20T12:13:00.987Z"
   },
   {
     "id": "q_dir_02",
@@ -17,11 +18,12 @@
     "domain": "aidirs.org",
     "category": "directory",
     "priority": "P0",
-    "status": "pending",
+    "status": "published",
     "landing_page": "https://apivale.com/",
     "author_persona": "APIVALE Official",
     "email": "support@apivale.com",
-    "keyword": "AI API Directory"
+    "keyword": "AI API Directory",
+    "publishedAt": "2026-11-20T12:14:40.243Z"
   },
   {
     "id": "q_comm_01",
@@ -29,11 +31,12 @@
     "domain": "dev.to",
     "category": "community_article",
     "priority": "P0",
-    "status": "pending",
+    "status": "published",
     "landing_page": "https://apivale.com/blog/gpt-6-2-sol-api-pricing-benchmarks-guide/",
     "author_persona": "Alex Rivera @ APIVALE",
     "email": "alex.rivera@apivale.com",
-    "keyword": "GPT-6.2 Sol API / Dev.to Guide"
+    "keyword": "GPT-6.2 Sol API / Dev.to Guide",
+    "publishedAt": "2026-11-20T12:16:17.063Z"
   },
   {
     "id": "q_dir_03",
@@ -41,11 +44,12 @@
     "domain": "futurepedia.io",
     "category": "directory",
     "priority": "P1",
-    "status": "pending",
+    "status": "published",
     "landing_page": "https://apivale.com/",
     "author_persona": "APIVALE Official",
     "email": "support@apivale.com",
-    "keyword": "Futurepedia Free Queue"
+    "keyword": "Futurepedia Free Queue",
+    "publishedAt": "2026-11-20T12:17:50.323Z"
   },
   {
     "id": "q_dir_04",
@@ -53,11 +57,12 @@
     "domain": "dang.ai",
     "category": "directory",
     "priority": "P1",
-    "status": "pending",
+    "status": "published",
     "landing_page": "https://apivale.com/",
     "author_persona": "APIVALE Official",
     "email": "support@apivale.com",
-    "keyword": "Dang.ai Free Listing"
+    "keyword": "Dang.ai Free Listing",
+    "publishedAt": "2026-11-20T12:19:28.415Z"
   },
   {
     "id": "q_blog_01",
@@ -65,11 +70,12 @@
     "domain": "promptengineering.org",
     "category": "blog_comment",
     "priority": "P0",
-    "status": "pending",
+    "status": "published",
     "landing_page": "https://apivale.com/blog/gpt-6-2-sol-api-pricing-benchmarks-guide/",
     "author_persona": "Alex Rivera @ APIVALE",
     "email": "alex.rivera@apivale.com",
-    "keyword": "GPT-6.2 Sol API / AI Gateway"
+    "keyword": "GPT-6.2 Sol API / AI Gateway",
+    "publishedAt": "2026-11-20T12:21:02.906Z"
   },
   {
     "id": "q_blog_02",
@@ -77,10 +83,11 @@
     "domain": "datasciencecentral.com",
     "category": "blog_comment",
     "priority": "P0",
-    "status": "pending",
+    "status": "published",
     "landing_page": "https://apivale.com/blog/sage-s2-1-flash-api-pricing-moe-router-guide/",
     "author_persona": "Elena Rostova @ APIVALE",
     "email": "elena.rostova@apivale.com",
-    "keyword": "Sage S2.1 Flash API 321B MoE"
+    "keyword": "Sage S2.1 Flash API 321B MoE",
+    "publishedAt": "2026-11-20T12:22:36.335Z"
   }
 ]

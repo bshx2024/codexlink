@@ -82,49 +82,69 @@ function sleep(ms) {
 }
 
 /**
- * 轨道 1：轻量 HTTP/TLS 探针
+ * 轨道 1：轻量 HTTP/TLS 探针 (支持跟随 301/302 重定向)
  */
-async function probeViaHttp(targetUrl, timeoutMs = 7000) {
-  return new Promise(resolve => {
-    try {
-      const u = new URL(targetUrl);
-      const client = u.protocol === 'https:' ? https : http;
-      const req = client.get({
-        hostname: u.hostname,
-        port: u.port || (u.protocol === 'https:' ? 443 : 80),
-        path: u.pathname + u.search,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          'Accept-Language': 'en-US,en;q=0.9'
-        },
-        timeout: timeoutMs
-      }, res => {
-        let body = '';
-        res.on('data', chunk => {
-          if (body.length < 500000) body += chunk.toString();
-        });
-        res.on('end', () => {
-          resolve({
-            statusCode: res.statusCode,
-            headers: res.headers,
-            body,
-            error: null
+async function probeViaHttp(targetUrl, timeoutMs = 7000, maxRedirects = 3) {
+  let currentUrl = targetUrl;
+  let redirects = 0;
+
+  while (redirects <= maxRedirects) {
+    const res = await new Promise(resolve => {
+      try {
+        const u = new URL(currentUrl);
+        const client = u.protocol === 'https:' ? https : http;
+        const req = client.get({
+          hostname: u.hostname,
+          port: u.port || (u.protocol === 'https:' ? 443 : 80),
+          path: u.pathname + u.search,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9'
+          },
+          timeout: timeoutMs
+        }, response => {
+          let body = '';
+          response.on('data', chunk => {
+            if (body.length < 500000) body += chunk.toString();
+          });
+          response.on('end', () => {
+            resolve({
+              statusCode: response.statusCode,
+              headers: response.headers,
+              body,
+              error: null,
+              finalUrl: currentUrl
+            });
           });
         });
-      });
 
-      req.on('timeout', () => {
-        req.destroy();
-        resolve({ statusCode: 0, headers: {}, body: '', error: 'TIMEOUT' });
-      });
-      req.on('error', err => {
-        resolve({ statusCode: 0, headers: {}, body: '', error: err.message });
-      });
-    } catch (e) {
-      resolve({ statusCode: 0, headers: {}, body: '', error: e.message });
+        req.on('timeout', () => {
+          req.destroy();
+          resolve({ statusCode: 0, headers: {}, body: '', error: 'TIMEOUT', finalUrl: currentUrl });
+        });
+        req.on('error', err => {
+          resolve({ statusCode: 0, headers: {}, body: '', error: err.message, finalUrl: currentUrl });
+        });
+      } catch (e) {
+        resolve({ statusCode: 0, headers: {}, body: '', error: e.message, finalUrl: currentUrl });
+      }
+    });
+
+    if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+      redirects++;
+      try {
+        currentUrl = new URL(res.headers.location, currentUrl).href;
+        continue;
+      } catch (e) {
+        return res;
+      }
     }
-  });
+
+    return res;
+  }
+
+  return { statusCode: 0, headers: {}, body: '', error: 'Too many redirects', finalUrl: currentUrl };
 }
 
 /**

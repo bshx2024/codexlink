@@ -73,25 +73,30 @@ async function loadDirectoryHandle() {
   }
 }
 
-async function executeInActiveTab(func, args = []) {
+async function getTargetWebTabId(tabId = null) {
+  if (tabId) {
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      if (tab && tab.id && !tab.url.startsWith('chrome-extension://') && !tab.url.startsWith('chrome://')) {
+        return tab.id;
+      }
+    } catch (e) {}
+  }
+  const activeTabs = await chrome.tabs.query({ active: true });
+  const activeWeb = activeTabs.find(t => t.url && !t.url.startsWith('chrome-extension://') && !t.url.startsWith('chrome://') && !t.url.startsWith('about:'));
+  if (activeWeb) return activeWeb.id;
+
+  const allTabs = await chrome.tabs.query({});
+  const anyWeb = allTabs.find(t => t.url && !t.url.startsWith('chrome-extension://') && !t.url.startsWith('chrome://') && !t.url.startsWith('about:'));
+  if (anyWeb) return anyWeb.id;
+
+  throw new Error('未找到目标网页标签页 (全部为扩展或内置页面)');
+}
+
+async function executeInActiveTab(func, args = [], explicitTabId = null) {
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab || !tab.id) throw new Error('未找到当前活跃标签页');
-
-    if (tab.url.startsWith('chrome://') || tab.url.startsWith('edge://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('about:')) {
-      throw new Error('浏览器内置页面受安全策略保护，无法注入脚本。');
-    }
-
-    const results = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: func,
-      args: args
-    });
-
-    if (results && results[0]) {
-      return results[0].result;
-    }
-    return null;
+    const targetId = await getTargetWebTabId(explicitTabId);
+    return await executeInTab(targetId, func, args);
   } catch (err) {
     console.warn('[executeInActiveTab Error]:', err);
     throw err;
@@ -397,26 +402,45 @@ async function handleRemoteAgentAction(action, data = {}) {
   if (action === 'navigate') {
     const { url, tabId } = data;
     if (!url) throw new Error('缺少 url 参数');
-    // 若显式携带 tabId，坚决不切前台，直接后台更新
-    if (tabId) {
-      await chrome.tabs.update(tabId, { url });
-      return { success: true, tabId, url };
+    let targetTabId = tabId;
+    if (!targetTabId) {
+      targetTabId = await getTargetWebTabId().catch(() => null);
     }
-    await openAndFocusUrl(url);
-    return { success: true };
+    if (targetTabId) {
+      await chrome.tabs.update(targetTabId, { url, active: true });
+      scheduleHumanScrollToComment(targetTabId);
+      return { success: true, tabId: targetTabId, url };
+    }
+    const newTab = await chrome.tabs.create({ url, active: true });
+    scheduleHumanScrollToComment(newTab.id);
+    return { success: true, tabId: newTab.id, url };
   }
 
   if (action === 'click') {
     const { selector, tabId } = data;
     if (!selector) throw new Error('缺少 selector 参数');
-    let targetTabId = tabId;
-    if (!targetTabId) {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tab) targetTabId = tab.id;
-    }
-    if (!targetTabId) throw new Error('未找到可用目标标签页');
+    const targetTabId = await getTargetWebTabId(tabId);
 
-    let clickSuccess = false;
+    // 1. 优先采用高可靠 DOM 提交与物理级点击 (带 form.requestSubmit)
+    try {
+      const clicked = await executeInTab(targetTabId, (sel) => {
+        const el = document.querySelector(sel);
+        if (!el) return false;
+        el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        if (el.form && typeof el.form.requestSubmit === 'function') {
+          try { el.form.requestSubmit(el); } catch (e) { el.click(); }
+        } else {
+          el.click();
+        }
+        return true;
+      }, [selector]);
+
+      if (clicked) {
+        return { success: true, tabId: targetTabId, method: 'dom_submit' };
+      }
+    } catch (e) { }
+
+    // 2. 备用：若 DOM 未直接触发，尝试 CDP 物理坐标点击 (2.5s 超时熔断保护)
     try {
       const [{ result: coords }] = await chrome.scripting.executeScript({
         target: { tabId: targetTabId },
@@ -430,32 +454,21 @@ async function handleRemoteAgentAction(action, data = {}) {
         args: [selector]
       });
       if (coords) {
-        const res = await chrome.runtime.sendMessage({ type: 'CDP_PHYSICAL_CLICK', tabId: targetTabId, x: coords.x, y: coords.y });
-        if (res && res.success) clickSuccess = true;
+        await Promise.race([
+          chrome.runtime.sendMessage({ type: 'CDP_PHYSICAL_CLICK', tabId: targetTabId, x: coords.x, y: coords.y }),
+          new Promise(r => setTimeout(r, 2500))
+        ]);
+        return { success: true, tabId: targetTabId, method: 'cdp_click' };
       }
     } catch (e) { }
 
-    if (!clickSuccess) {
-      await executeInTab(targetTabId, (sel) => {
-        const el = document.querySelector(sel);
-        if (!el) throw new Error('未找到元素: ' + sel);
-        el.click();
-        return true;
-      }, [selector]);
-    }
     return { success: true, tabId: targetTabId };
   }
 
   if (action === 'type') {
     const { selector, text, humanLike = true, tabId } = data;
     if (!selector) throw new Error('缺少 selector 参数');
-
-    let targetTabId = tabId;
-    if (!targetTabId) {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tab) targetTabId = tab.id;
-    }
-    if (!targetTabId) throw new Error('未找到可用目标标签页。');
+    const targetTabId = await getTargetWebTabId(tabId);
 
     await executeInTab(targetTabId, (sel) => {
       const el = document.querySelector(sel);
@@ -523,13 +536,12 @@ async function handleRemoteAgentAction(action, data = {}) {
   }
 
   if (action === 'human_fill_comment') {
-    const { comment, author, email, url, autoSubmit = false } = data;
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab) throw new Error('未找到活跃标签页。');
+    const { comment, author, email, url, autoSubmit = false, tabId } = data;
+    const targetTabId = await getTargetWebTabId(tabId);
 
     // 1. 平滑缓动滚动至评论区
     try {
-      await executeHumanScrollInTab(tab.id);
+      await executeHumanScrollInTab(targetTabId);
       await new Promise(r => setTimeout(r, 1200));
     } catch (e) { }
 
@@ -539,87 +551,75 @@ async function handleRemoteAgentAction(action, data = {}) {
 
     // 2.1 评论正文
     if (comment) {
-      await executeInActiveTab(async (val) => {
+      const filledComment = await executeInActiveTab(async (val) => {
         const commentEl = document.querySelector('textarea[name*="comment" i], textarea[id*="comment" i], textarea[placeholder*="comment" i], textarea[placeholder*="评论" i], textarea[placeholder*="留言" i], textarea[placeholder*="reply" i], textarea');
         if (!commentEl) return false;
         commentEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
         commentEl.focus();
-        commentEl.value = '';
-        const chunkSize = Math.max(15, Math.floor(val.length / 10));
-        let curr = 0;
-        while (curr < val.length) {
-          const chunk = val.slice(curr, curr + chunkSize);
-          commentEl.value += chunk;
-          commentEl.dispatchEvent(new Event('input', { bubbles: true }));
-          curr += chunkSize;
-          await new Promise(r => setTimeout(r, Math.floor(Math.random() * 40 + 30)));
-        }
+        commentEl.value = val;
+        commentEl.dispatchEvent(new Event('input', { bubbles: true }));
         commentEl.dispatchEvent(new Event('change', { bubbles: true }));
-        commentEl.style.border = '2px solid #10b981';
+        commentEl.style.border = '3px solid #10b981';
+        commentEl.style.backgroundColor = '#f0fdf4';
         return true;
-      }, [comment]);
+      }, [comment], targetTabId);
+      if (!filledComment) throw new Error('未找到评论输入框 (textarea)');
       filledFields.push('评论正文');
-      await new Promise(r => setTimeout(r, Math.floor(Math.random() * 300 + 500))); // 500-800ms 停顿
+      await new Promise(r => setTimeout(r, Math.floor(Math.random() * 300 + 500)));
     }
 
     // 2.2 姓名
     if (author) {
-      await executeInActiveTab(async (val) => {
+      const filledAuthor = await executeInActiveTab(async (val) => {
         const nameEl = document.querySelector('input[placeholder*="昵称" i], input[placeholder*="姓名" i], input[placeholder*="Name" i], input[placeholder*="Author" i], input[name*="author" i], input[name*="name" i], input[id*="author" i], input[id*="name" i], #author');
         if (!nameEl) return false;
         nameEl.focus();
-        nameEl.value = '';
-        for (let i = 0; i < val.length; i++) {
-          nameEl.value += val[i];
-          nameEl.dispatchEvent(new Event('input', { bubbles: true }));
-          await new Promise(r => setTimeout(r, Math.floor(Math.random() * 25 + 20)));
-        }
+        nameEl.value = val;
+        nameEl.dispatchEvent(new Event('input', { bubbles: true }));
         nameEl.dispatchEvent(new Event('change', { bubbles: true }));
-        nameEl.style.border = '2px solid #10b981';
+        nameEl.style.border = '3px solid #10b981';
+        nameEl.style.backgroundColor = '#f0fdf4';
         return true;
-      }, [author]);
+      }, [author], targetTabId);
+      if (!filledAuthor) throw new Error('未找到姓名输入框 (author)');
       filledFields.push('姓名');
-      await new Promise(r => setTimeout(r, Math.floor(Math.random() * 200 + 400))); // 400-600ms 停顿
+      await new Promise(r => setTimeout(r, Math.floor(Math.random() * 200 + 400)));
     }
 
     // 2.3 邮箱
     if (email) {
-      await executeInActiveTab(async (val) => {
+      const filledEmail = await executeInActiveTab(async (val) => {
         const emailEl = document.querySelector('input[placeholder*="邮箱" i], input[placeholder*="Email" i], input[placeholder*="Mail" i], input[type="email"], input[name*="email" i], input[id*="email" i], #email');
         if (!emailEl) return false;
         emailEl.focus();
-        emailEl.value = '';
-        for (let i = 0; i < val.length; i++) {
-          emailEl.value += val[i];
-          emailEl.dispatchEvent(new Event('input', { bubbles: true }));
-          await new Promise(r => setTimeout(r, Math.floor(Math.random() * 25 + 20)));
-        }
+        emailEl.value = val;
+        emailEl.dispatchEvent(new Event('input', { bubbles: true }));
         emailEl.dispatchEvent(new Event('change', { bubbles: true }));
-        emailEl.style.border = '2px solid #10b981';
+        emailEl.style.border = '3px solid #10b981';
+        emailEl.style.backgroundColor = '#f0fdf4';
         return true;
-      }, [email]);
+      }, [email], targetTabId);
+      if (!filledEmail) throw new Error('未找到邮箱输入框 (email)');
       filledFields.push('邮箱');
-      await new Promise(r => setTimeout(r, Math.floor(Math.random() * 200 + 400))); // 400-600ms 停顿
+      await new Promise(r => setTimeout(r, Math.floor(Math.random() * 200 + 400)));
     }
 
     // 2.4 网站
     if (url) {
-      await executeInActiveTab(async (val) => {
+      const filledUrl = await executeInActiveTab(async (val) => {
         const urlEl = document.querySelector('input[placeholder*="网址" i], input[placeholder*="网站" i], input[placeholder*="URL" i], input[placeholder*="Website" i], input[type="url"], input[name*="url" i], input[name*="website" i], input[id*="url" i], input[id*="website" i], #url');
         if (!urlEl) return false;
         urlEl.focus();
-        urlEl.value = '';
-        for (let i = 0; i < val.length; i++) {
-          urlEl.value += val[i];
-          urlEl.dispatchEvent(new Event('input', { bubbles: true }));
-          await new Promise(r => setTimeout(r, Math.floor(Math.random() * 20 + 15)));
-        }
+        urlEl.value = val;
+        urlEl.dispatchEvent(new Event('input', { bubbles: true }));
         urlEl.dispatchEvent(new Event('change', { bubbles: true }));
-        urlEl.style.border = '2px solid #10b981';
+        urlEl.style.border = '3px solid #10b981';
+        urlEl.style.backgroundColor = '#f0fdf4';
         return true;
-      }, [url]);
+      }, [url], targetTabId);
+      if (!filledUrl) throw new Error('未找到网址/Website输入框 (url)');
       filledFields.push('网址');
-      await new Promise(r => setTimeout(r, Math.floor(Math.random() * 400 + 800))); // 800-1200ms 检查停顿
+      await new Promise(r => setTimeout(r, Math.floor(Math.random() * 400 + 800)));
     }
 
     // 2.5 自动勾选 Cookie
@@ -629,41 +629,84 @@ async function handleRemoteAgentAction(action, data = {}) {
         consentEl.checked = true;
         consentEl.dispatchEvent(new Event('change', { bubbles: true }));
       }
+    }, [], targetTabId);
+
+    return {
+      success: true,
+      data: {
+        success: true,
+        filledFields,
+        tabId: targetTabId,
+        totalDurationMs: Date.now() - startTime
+      }
+    };
+  }
+
+  // 待审核态检测与居中对焦动作
+  if (action === 'verify_and_focus_moderation') {
+    const targetTabId = await getTargetWebTabId(data.tabId);
+    const result = await executeInTab(targetTabId, () => {
+      const selCandidates = [
+        '.comment-awaiting-moderation',
+        '[class*="awaiting-moderation"]',
+        'em.comment-awaiting-moderation',
+        '.comment-notes',
+        '.woocommerce-message',
+        '#comment-status',
+        '.comment-respond + .comment-list',
+        'ol.commentlist li:last-child',
+        'ul.comment-list li:last-child',
+        '#comments'
+      ];
+
+      let foundEl = null;
+      let matchedText = '';
+
+      for (const sel of selCandidates) {
+        const el = document.querySelector(sel);
+        if (el && el.offsetParent !== null) {
+          foundEl = el;
+          matchedText = el.innerText.trim();
+          break;
+        }
+      }
+
+      if (!foundEl) {
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+        let node;
+        while ((node = walker.nextNode())) {
+          if (/awaiting moderation|held for moderation|pending approval|thank you for your comment|comment will appear/i.test(node.nodeValue)) {
+            foundEl = node.parentElement;
+            matchedText = node.nodeValue.trim();
+            break;
+          }
+        }
+      }
+
+      const bodyText = document.body.innerText;
+      const hasAwaiting = /awaiting moderation|held for moderation|pending approval|comment will appear|under review|待审核|thank you for your comment/i.test(bodyText);
+      const hasAuthor = /Alex Rivera/i.test(bodyText);
+
+      if (foundEl) {
+        foundEl.scrollIntoView({ block: 'center', behavior: 'instant' });
+        foundEl.style.outline = '4px solid #f59e0b';
+        foundEl.style.backgroundColor = 'rgba(245, 158, 11, 0.15)';
+      } else {
+        const commentsSec = document.querySelector('#comments, .comments-area, ol.commentlist, .comment-list');
+        if (commentsSec) {
+          commentsSec.scrollIntoView({ block: 'start', behavior: 'instant' });
+        }
+      }
+
+      return {
+        hasAwaitingNotice: hasAwaiting,
+        hasAuthorName: hasAuthor,
+        foundElement: Boolean(foundEl),
+        matchedText: matchedText.slice(0, 150)
+      };
     });
 
-    let submitted = false;
-    if (autoSubmit) {
-      // CDP 物理级提交点击
-      try {
-        const [{ result: coords }] = await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          func: () => {
-            const btn = document.querySelector('#submit, button[type="submit"], input[type="submit"], button.submit, input[name="submit"]');
-            if (!btn) return null;
-            btn.scrollIntoView({ block: 'center', behavior: 'smooth' });
-            const rect = btn.getBoundingClientRect();
-            return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
-          }
-        });
-        if (coords) {
-          await new Promise(r => setTimeout(r, 400));
-          const clickRes = await chrome.runtime.sendMessage({ type: 'CDP_PHYSICAL_CLICK', tabId: tab.id, x: coords.x, y: coords.y });
-          if (clickRes && clickRes.success) submitted = true;
-        }
-      } catch (e) { }
-
-      if (!submitted) {
-        // DOM 点击降级
-        await executeInActiveTab(() => {
-          const btn = document.querySelector('#submit, button[type="submit"], input[type="submit"]');
-          if (btn) btn.click();
-        });
-        submitted = true;
-      }
-    }
-
-    const totalDurationMs = Date.now() - startTime;
-    return { success: true, filledFields, submitted, totalDurationMs };
+    return { success: true, ...(result || {}) };
   }
 
   if (action === 'scroll') {
@@ -678,7 +721,14 @@ async function handleRemoteAgentAction(action, data = {}) {
   }
 
   if (action === 'screenshot') {
-    const targetTabId = data.tabId;
+    let targetTabId = null;
+    let targetWindowId = null;
+    try {
+      targetTabId = await getTargetWebTabId(data.tabId);
+      const targetTab = await chrome.tabs.get(targetTabId);
+      targetWindowId = targetTab ? targetTab.windowId : null;
+    } catch (e) { }
+
     // 🌟 借助 CDP DevTools 协议原生硬件缩放截屏 (借鉴自 browser-hands)
     try {
       const res = await chrome.runtime.sendMessage({
@@ -691,9 +741,9 @@ async function handleRemoteAgentAction(action, data = {}) {
       }
     } catch (e) { }
 
-    // 降级使用 captureVisibleTab
+    // 降级使用 captureVisibleTab，指定 targetWindowId 确保不截取侧边栏窗口
     return new Promise((resolve, reject) => {
-      chrome.tabs.captureVisibleTab(null, { format: 'jpeg', quality: 80 }, (dataUrl) => {
+      chrome.tabs.captureVisibleTab(targetWindowId, { format: 'jpeg', quality: 80 }, (dataUrl) => {
         if (chrome.runtime.lastError || !dataUrl) {
           return reject(new Error(chrome.runtime.lastError ? chrome.runtime.lastError.message : '截图返回为空'));
         }
@@ -995,7 +1045,14 @@ function renderMarkdownPreview(tabData) {
 }
 
 async function fetchActiveTabContent() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  let tab = null;
+  try {
+    const targetId = await getTargetWebTabId();
+    tab = await chrome.tabs.get(targetId);
+  } catch (e) {
+    const [t] = await chrome.tabs.query({ active: true });
+    tab = t;
+  }
   if (!tab) throw new Error('未检测到打开的活跃网页');
 
   if (!tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('edge://') || tab.url.startsWith('about:')) {
@@ -2405,9 +2462,15 @@ async function openAndFocusUrl(url, options = {}) {
   try {
     let targetTabId = options.tabId || null;
     if (!targetTabId) {
-      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tabs && tabs.length > 0 && tabs[0].id) {
-        targetTabId = tabs[0].id;
+      try {
+        targetTabId = await getTargetWebTabId();
+      } catch (e) {
+        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tabs && tabs.length > 0 && tabs[0].id) {
+          targetTabId = tabs[0].id;
+        }
+      }
+      if (targetTabId) {
         await chrome.tabs.update(targetTabId, { url: url, active: makeActive });
       } else {
         const newTab = await chrome.tabs.create({ url: url, active: makeActive });
