@@ -57,6 +57,7 @@
 | **Pricing** | `Free options available` (Freemium / Usage-based) | 符合平台规范，支持免费启动与 PayPal 按需结算 |
 | **Additional Links** | 1. `https://github.com/bshx2024/cursor-deepseek-template`<br>2. `https://github.com/bshx2024/docker-compose-deepseek-gateway`<br>3. `https://github.com/bshx2024/esp32-deepseek-client` | **3 大开源生态矩阵**：涵盖 AI 编程 (Cursor)、私有化自建 (Docker Compose)、物联网硬件 (ESP32) 铁三角 |
 | **Promo Code** | **Offer**: `$0.50 Extra API Credits`<br>**Code**: `PRODUCTHUNT` | **专属社区礼遇（Community Deal）**：约等值免费赠送 750,000 Tokens。严格遵循 PH 字符规范（$\le 25$ 字符）并激活 `🎁` 醒目标签 |
+| **First Comment** | **Maker 置顶首评（2640/5000 字符）** | **开发者顶级转化最佳实践**：<br>1. 痛点：海外开发者微信/支付宝支付壁垒与身份门槛；<br>2. 实测数据：Claude 3.7 (\$3~15) vs DeepSeek (\$0.14~0.28) 达成 **95% 成本套利**；<br>3. 3 行代码接入：针对 Cursor, Claude Code, Cline 的即插即用代码块；<br>4. 呼应生态：3 大 GitHub 仓库外链；<br>5. 兑换闭环：`PRODUCTHUNT` 优惠码兑换路径与 Twitter 跑分外溢奖励机制。 |
 
 ### 二、 核心演练经验与风控复盘要点：
 1. **文案去敏感化（弃用 Zero-KYC）**：
