@@ -62,13 +62,13 @@
    - 优化为 `Chinese AI API gateway for DeepSeek, Qwen, Kimi & GLM`，不仅 100% 安全合规，而且直击海外开发者无法用微信/支付宝支付的痛点。
 2. **拒绝杜撰模型，坚持 100% 真实对齐**：
    - 彻底清除早期推演模板中的虚构大模型名称，严格以 `apivale.com` 线上真实支持的四大国产顶级模型（DeepSeek、Qwen、Kimi、GLM）为唯一标准。
-3. **宣传大图（Launch Media）制作标准**：
-   - 必须采用官方黄金推荐分辨率 **`1270 × 760`**；
-   - 必须关闭所有扩展插件侧边栏（如 AITDK）以防挤压页面排版；
-   - 切换为纯正 English 语言视图，展示 Hero 核心特性大图。
+3. **产品图标（Product Logo）与宣传大图（Launch Media）制作标准**：
+   - **Logo 槽位规范**：必须采用 1:1 正方形高精度矢量图标（本次制作并上传了 **`512 × 512`** 暗黑微光深色背景搭配 APIVALE 官方渐变四芒星标识），完全解决此前使用长方形全屏截图导致在 40×40~80×80 px 信息流与详情页中严重压扁变形、文字不可读的致命问题；
+   - **Gallery 媒体槽位**：必须采用官方黄金推荐分辨率 **`1270 × 760`**，关闭所有浏览器扩展插件侧边栏（如 AITDK），展示 `DeepSeek, Qwen, GLM & Kimi` 的官方英文界面 Hero 核心大图。
+4. **审核指标完成度**：
+   - 草稿必填 7 项全部亮绿（**`7/14 - Your page is ready to schedule`**）：Launch name, Tagline, Description, Logo, Gallery image, Launch tags, Your role 全部符合要求并自动保存（`Draft saved`）。
 
-### 三、 待办事项 (Pending Action Items)：
-1. **待用户完成官网小错误修改**：用户正在修正 `apivale.com` 页面上的细节错误。
-2. **重新截图与图库替换**：官网修改完成后，智能体将重新执行 1270×760 纯净截屏，覆盖更新 `apivale_producthunt_hero_1270x760.png` 并绑定至 Product Hunt 图库。
-3. **正式 Launch 排期时机**：待 APIVALE 沉淀 20~30 个种子海外开发者用户、准备好 Hunter 后再选择正式发布日期。
+### 三、 状态归档与后续动作 (Action Items)：
+1. **当前草稿状态**：已安全暂存于 Product Hunt 后台（`Draft saved`），未点击任何发布/排期按钮。
+2. **正式 Launch 排期时机**：待 APIVALE 沉淀 20~30 个种子海外开发者用户、准备好 Hunter 后再选择正式发布日期。
 
