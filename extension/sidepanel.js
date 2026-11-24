@@ -1921,6 +1921,50 @@ function initBatchWorkbench() {
     btnScrapeGoogle.addEventListener('click', scrapeGoogleSearchResultsHandler);
   }
 
+  const btnImportPipeline = document.getElementById('btn-import-pipeline-targets');
+  if (btnImportPipeline) {
+    btnImportPipeline.addEventListener('click', async () => {
+      btnImportPipeline.disabled = true;
+      btnImportPipeline.textContent = '📦 领单中...';
+      try {
+        const resp = await fetch('http://127.0.0.1:3010/api/backlink/claim', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ limit: 10, claimedBy: 'sidepanel-ui' })
+        });
+        const data = await resp.json();
+        if (data.success && data.items && data.items.length > 0) {
+          let added = 0;
+          const existing = new Set(currentBatchQueue.map(i => (i.url || '').toLowerCase()));
+          for (const t of data.items) {
+            const url = t.link_page_url || ('https://' + t.target_domain);
+            if (!existing.has(url.toLowerCase())) {
+              currentBatchQueue.push({
+                url: url,
+                domain: t.target_domain,
+                title: t.anchor_text || t.target_domain,
+                status: 'pending',
+                targetId: t.id
+              });
+              existing.add(url.toLowerCase());
+              added++;
+            }
+          }
+          localStorage.setItem('comlinkai_batch_queue', JSON.stringify(currentBatchQueue));
+          updateBatchUI();
+          alert('🎉 成功从 6-Table 管道领取 ' + added + ' 条高确定性待发目标！\n已自动注入待发布队列。点击顶部【🚀 发布】切到发布页，即可一键【▶ 启动挂机】！');
+        } else {
+          alert('⚠️ 管道中暂无 pending 状态的任务。\n请先在终端运行外链收集流水线（如 node scripts/collector_devto_dataforseo.js）生成任务！');
+        }
+      } catch (e) {
+        alert('🔴 连接本地服务端失败 (http://127.0.0.1:3010): ' + e.message + '\n请确保已在终端启动: node server/index.js');
+      } finally {
+        btnImportPipeline.disabled = false;
+        btnImportPipeline.textContent = '📦 管道领单10条';
+      }
+    });
+  }
+
   if (btnClearQueue) {
     btnClearQueue.addEventListener('click', () => {
       if (confirm('确定要清空全部收集与发布外链队列吗？')) {
