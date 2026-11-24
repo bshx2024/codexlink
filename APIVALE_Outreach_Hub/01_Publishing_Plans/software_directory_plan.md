@@ -42,20 +42,16 @@
 ### 1. 基础元信息
 - **App / Product Name**: `APIVALE`
 - **Official Website URL**: `https://apivale.com/`
-- **Pricing Model**: `Freemium` (Usage-based credits / Pay as you go)
+- **Pricing Model**: `Freemium` (Usage-based credits / Pay as you go, PayPal accepted)
 - **Primary Category**: `Developer Tools` -> `AI APIs & Infrastructure`
 - **Platforms Supported**: `Web`, `SaaS`, `API Endpoint`
-- **Icon URL**: `https://apivale.com/favicon.ico` (或 512x512 高清 PNG)
+- **Icon URL**: `https://apivale.com/favicon.ico`
 - **Support Email**: `support@apivale.com`
 
-### 2. 标准 Tagline / Short Description (1 句话，80 字符以内)
-> `High-concurrency, zero-KYC AI API gateway with unified OpenAI-compatible routing.`
+### 2. 标准 Tagline / Short Description (60 字符以内)
+> `Chinese AI API gateway for DeepSeek, Qwen, Kimi & GLM` (55 字符)
+*(备选: `Access DeepSeek, Qwen, Kimi & GLM with OpenAI-compatible API` - 59 字符)*
 
-### 3. 标准 Full Description (适用于 200~500 词要求)
-> `APIVALE is an enterprise-grade AI model gateway and unified routing protocol designed for developers and autonomous AI agents. It provides a standard OpenAI-compatible API endpoint that bridges leading frontier models, including Anthropic Claude 3.5 Sonnet and Fable 5.2, OpenAI GPT-6.2 Sol, Shanghai AI Lab Sage S2.1 Flash (321B MoE), DeepSeek V4, and Alibaba Qwen 4.`
->
-> `Key Capabilities:`  
-> `- Zero-KYC Onboarding: Instant setup with pay-as-you-go billing via PayPal and global payment methods.`  
-> `- Dynamic Multi-Tier Routing: Latency-aware failover and model switching between frontier commercial APIs and high-efficiency open-weights MoE models.`  
-> `- KV Cache & Prompt Cache Optimization: Aggressive cache reuse cutting reasoning and output token costs by up to 88%.`  
+### 3. 标准 Full Description (依据官方真实 TDK 确立)
+> `Access DeepSeek, Qwen, Kimi & GLM via APIVALE — the premier Chinese AI API Gateway. APIVALE provides global developers and autonomous AI agents with a high-availability, unified OpenAI-compatible endpoint. High performance, PayPal accepted, and zero-friction instant access. Start free.`  
 > `- Developer Tool Integration: Plug-and-play support for Cursor IDE, Cline, Claude Code CLI, and OpenAI Codex CLI.`
