@@ -54,10 +54,10 @@
 | **Description** | `Access DeepSeek, Qwen, Kimi & GLM via APIVALE — the premier Chinese AI API Gateway. APIVALE provides global developers and autonomous AI agents with a high-availability, unified OpenAI-compatible endpoint. High performance, PayPal accepted, and zero-friction instant access. Start free.` | **286/500 字符**。突出高可用、统一 OpenAI 路由、支持 PayPal 充值、即刻免阻力开通 |
 | **Launch Tags** | `Developer Tools`, `Artificial Intelligence`, `API` | 3 大最精准开发者受众品类全部生效 |
 | **Your Role** | `Maker` (I made this) | 官方创建者认领 |
-| **Pricing** | `Free options available` (Freemium / Usage-based) | 符合平台规范，支持免费启动与 PayPal 按需结算 |
+| **Pricing** | `Free options available` (Free Options) | **达成加分项（达成 10/14）**：完全匹配 APIVALE 业务模式（注册即送 \$0.20 免费测试额度 + `PRODUCTHUNT` 码加赠 \$0.50 额度，支持免绑卡试用；后续按量付费与 PayPal \$1.99 起充值）。在 PH 信息流与榜单中激活 `Free Options` 信任标签，显著提升点击转化率。 |
 | **Additional Links** | 1. `https://github.com/bshx2024/cursor-deepseek-template`<br>2. `https://github.com/bshx2024/docker-compose-deepseek-gateway`<br>3. `https://github.com/bshx2024/esp32-deepseek-client` | **3 大开源生态矩阵**：涵盖 AI 编程 (Cursor)、私有化自建 (Docker Compose)、物联网硬件 (ESP32) 铁三角 |
 | **Promo Code** | **Offer**: `$0.50 Extra API Credits`<br>**Code**: `PRODUCTHUNT` | **专属社区礼遇（Community Deal）**：约等值免费赠送 750,000 Tokens。严格遵循 PH 字符规范（$\le 25$ 字符）并激活 `🎁` 醒目标签 |
-| **Gallery Media** | **3 张黄金画廊宣传图（1270 × 760）** | **激活 Carousel 轮播画廊（达成加分项 9/14）**：<br>1. 图 1：Hero 核心首屏（四大顶尖模型总览）；<br>2. 图 2：10s 极速接入与三大高可用保障（改 1 行 Base URL，Cursor/Python/ESP32 开源支持，高对比度暗黑代码块）；<br>3. 图 3：High-Throughput Flash Trio 旗舰模型矩阵与透明定价（DeepSeek-V4.1 Flash, DeepSeek-V4 Flash, GLM-5.3 Flash，PayPal 全球支持）。 |
+| **Gallery Media** | **3 张黄金画廊宣传图（1270 × 760）** | **激活 Carousel 轮播画廊（达成加分项 10/14）**：<br>1. 图 1：Hero 核心首屏（四大顶尖模型总览）；<br>2. 图 2：10s 极速接入与三大高可用保障（改 1 行 Base URL，Cursor/Python/ESP32 开源支持，高对比度暗黑代码块）；<br>3. 图 3：High-Throughput Flash Trio 旗舰模型矩阵与透明定价（DeepSeek-V4.1 Flash, DeepSeek-V4 Flash, GLM-5.3 Flash，PayPal 全球支持）。 |
 | **First Comment** | **Maker 置顶首评（2725/5000 字符）** | **开发者顶级转化最佳实践**：<br>1. 痛点：海外开发者微信/支付宝支付壁垒与身份门槛；<br>2. 实测数据：Claude 3.7 (\$3~15) vs DeepSeek (\$0.14~0.28) 达成 **95% 成本套利**；<br>3. 3 行代码接入：针对 Cursor, Claude Code, Cline 的即插即用代码块；<br>4. 呼应生态：3 大 GitHub 仓库外链；<br>5. 兑换闭环：`PRODUCTHUNT` 优惠码兑换路径与 Twitter 跑分外溢奖励机制。 |
 
 ### 二、 核心演练经验与风控复盘要点：
