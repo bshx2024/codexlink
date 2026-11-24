@@ -55,6 +55,7 @@
 | **Launch Tags** | `Developer Tools`, `Artificial Intelligence`, `API` | 3 大最精准开发者受众品类全部生效 |
 | **Your Role** | `Maker` (I made this) | 官方创建者认领 |
 | **Pricing** | `Free options available` (Freemium / Usage-based) | 符合平台规范，支持免费启动与 PayPal 按需结算 |
+| **Additional Links** | 1. `https://github.com/bshx2024/cursor-deepseek-template`<br>2. `https://github.com/bshx2024/docker-compose-deepseek-gateway`<br>3. `https://github.com/bshx2024/esp32-deepseek-client` | **3 大开源生态矩阵**：涵盖 AI 编程 (Cursor)、私有化自建 (Docker Compose)、物联网硬件 (ESP32) 铁三角 |
 
 ### 二、 核心演练经验与风控复盘要点：
 1. **文案去敏感化（弃用 Zero-KYC）**：
