@@ -63,8 +63,13 @@
 1. **文案去敏感化（弃用 Zero-KYC）**：
    - 早期模板中的 `Zero-KYC` 极易被 Stripe、PayPal 的爬虫风控判定为洗钱/欺诈高危商户，且易遭竞品恶意举报为“非法匿名通道”。
    - 优化为 `Chinese AI API gateway for DeepSeek, Qwen, Kimi & GLM`，不仅 100% 安全合规，而且直击海外开发者无法用微信/支付宝支付的痛点。
-2. **拒绝杜撰模型，坚持 100% 真实对齐**：
-   - 彻底清除早期推演模板中的虚构大模型名称，严格以 `apivale.com` 线上真实支持的四大国产顶级模型（DeepSeek、Qwen、Kimi、GLM）为唯一标准。
+2. **拒绝杜撰模型，坚持 100% 真实对齐线上最新版本**：
+   - 深入探测 `apivale.com/pricing` 线上实时模型阵列，全面对齐最新版本号：
+     - **DeepSeek 旗舰**：`DeepSeek-V4.1 Flash`（原生多模态 437 t/s）、`DeepSeek-V4 Pro`、`deepseek-reasoner`、`deepseek-chat`；
+     - **通义千问**：`Qwen 3.8 Max`（1M 上下文旗舰）；
+     - **智谱 GLM**：`GLM-5.3 Flash`（极速推理）；
+     - **月之暗面 Kimi**：`Moonshot Kimi K3`（1M 超长文本 MoE 旗舰）。
+   - 在置顶首评（First comment）、代码示例、定价对比中全面同步更新为上述线上最新官方模型版本，做到**100% 真实、严丝合缝、毫无陈旧信息**。
 3. **产品图标（Product Logo）与宣传大图（Launch Media）制作标准**：
    - **Logo 槽位规范**：必须采用 1:1 正方形高精度矢量图标（本次制作并上传了 **`512 × 512`** 暗黑微光深色背景搭配 APIVALE 官方渐变四芒星标识），完全解决此前使用长方形全屏截图导致在 40×40~80×80 px 信息流与详情页中严重压扁变形、文字不可读的致命问题；
    - **Gallery 媒体槽位**：必须采用官方黄金推荐分辨率 **`1270 × 760`**，关闭所有浏览器扩展插件侧边栏（如 AITDK），展示 `DeepSeek, Qwen, GLM & Kimi` 的官方英文界面 Hero 核心大图。
