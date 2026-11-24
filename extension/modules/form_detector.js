@@ -308,6 +308,226 @@ class FormDetector {
       return false;
     }
   }
+
+  // =========================================================================
+  // 5大工业级防线：入口嗅探、反蜜罐可见性、免费层级偏置与支付熔断
+  // =========================================================================
+
+  /**
+   * 防线 2: 真实可见性与反蜜罐过滤 (Anti-Honeypot Visibility Check)
+   * 必须确保元素真实渲染在视口中，严禁触发 display:none 或负坐标隐藏蜜罐
+   */
+  static isHumanVisible(el, doc = document) {
+    if (!el) return false;
+    try {
+      // 1. 基础 DOM 挂载与 offsetParent 检查
+      if (el.offsetParent === null && el.tagName !== 'BODY') return false;
+
+      // 2. CSS 计算样式过滤
+      const win = doc.defaultView || (typeof window !== 'undefined' ? window : null);
+      if (win && win.getComputedStyle) {
+        const style = win.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden') return false;
+        if (parseFloat(style.opacity || '1') < 0.05) return false;
+      }
+
+      // 3. 几何包围盒检查 (排除绝对定位 -9999px 的反爬蜜罐)
+      if (el.getBoundingClientRect) {
+        const rect = el.getBoundingClientRect();
+        if (rect.width < 4 || rect.height < 4) return false;
+        if (rect.bottom < 0 || rect.top > 12000 || rect.right < 0 || rect.left > 8000) return false;
+      }
+
+      return true;
+    } catch (e) {
+      return true;
+    }
+  }
+
+  /**
+   * 识别当前页面上的表单类型：'directory' (目录站) | 'blog_comment' (博客评论) | 'none'
+   */
+  static detectFormType(doc = document) {
+    // 目录站表单特征：包含标题/名称输入框，且具备网址/简介/富文本/分类/文件上传之一
+    const titleInput = doc.querySelector('input[placeholder*="标题" i], input[placeholder*="名称" i], input[placeholder*="Title" i], input[placeholder*="Name" i], input[name*="title" i], input[name*="site_name" i], input[name*="website_name" i], input[name*="app_name" i], input[name="name" i], input[id*="title" i], input[id*="name" i]');
+    const urlInput = doc.querySelector('input[type="url"], input[name*="url" i], input[name*="website" i], input[placeholder*="url" i], input[placeholder*="http" i]');
+    const fileInput = doc.querySelector('input[type="file"]');
+    const richText = doc.querySelector('.w-e-text-container, .ql-editor, .note-editable, .ck-content, div[contenteditable="true"]');
+    const taglineInput = doc.querySelector('input[name*="tagline" i], input[name*="summary" i], input[placeholder*="tagline" i], input[placeholder*="简介" i]');
+
+    if (titleInput && this.isHumanVisible(titleInput, doc) && (urlInput || fileInput || richText || taglineInput)) {
+      return 'directory';
+    }
+
+    // 博客评论特征：包含评论长文本框，且伴随昵称或邮箱输入
+    const commentBox = doc.querySelector('#comment, textarea[name*="comment" i], textarea[name*="message" i], textarea[name*="reply" i], textarea');
+    if (commentBox && this.isHumanVisible(commentBox, doc)) {
+      return 'blog_comment';
+    }
+
+    return 'none';
+  }
+
+  /**
+   * 嗅探提交入口链接与模态弹窗按钮 (智能寻找 Submit / Add Tool / Leave Reply)
+   * @param {Document} doc
+   * @param {string} currentUrl 当前页面完整 URL (用于同源防护)
+   * @returns {Array<{ type: 'navigate'|'modal', targetUrl: string, text: string, score: number, el: HTMLElement }>}
+   */
+  static sniffSubmissionEntry(doc = document, currentUrl = '') {
+    const candidates = [];
+    let currentHost = '';
+    let rootDomain = '';
+
+    try {
+      if (currentUrl) {
+        const u = new URL(currentUrl);
+        currentHost = u.hostname.toLowerCase();
+        const parts = currentHost.split('.');
+        rootDomain = parts.length > 2 ? parts.slice(-2).join('.') : currentHost;
+      }
+    } catch (e) {}
+
+    const SUBMIT_PATTERNS = [
+      { regex: /submit[-_ ]?(tool|ai|product|app|website|listing|resource|startup)?/i, score: 10 },
+      { regex: /add[-_ ]?(your)?[-_ ]?(tool|ai|product|app|website|listing)?/i, score: 10 },
+      { regex: /list[-_ ]?(your)?[-_ ]?(tool|product|app)?/i, score: 9 },
+      { regex: /suggest[-_ ]?(a)?[-_ ]?(tool|ai|product)?/i, score: 9 },
+      { regex: /post[-_ ]?(a)?[-_ ]?(tool|product)?/i, score: 8 },
+      { regex: /leave[-_ ]?(a)?[-_ ]?(reply|comment)?/i, score: 8 },
+      { regex: /提交(工具|网站|产品|项目)?/i, score: 10 },
+      { regex: /申请收录|免费收录|发布产品/i, score: 10 }
+    ];
+
+    const URL_PATH_PATTERNS = [
+      { regex: /\/(submit|add-tool|submit-tool|submit-ai|add-product|new-tool|submit-listing)/i, score: 9 },
+      { regex: /\/(add|listing|new|submission)/i, score: 6 },
+      { regex: /#respond|#comments/i, score: 7 }
+    ];
+
+    const EXCLUDE_DOMAINS = [
+      'twitter.com', 'x.com', 'github.com', 'facebook.com', 'linkedin.com',
+      'instagram.com', 'youtube.com', 'discord.gg', 'discord.com', 'telegram.org',
+      't.me', 'stripe.com', 'paypal.com', 'google.com', 'apple.com'
+    ];
+
+    // 1. 扫描所有可见 <a> 超链接
+    const anchors = Array.from(doc.querySelectorAll('a[href]'));
+    for (const a of anchors) {
+      if (!this.isHumanVisible(a, doc)) continue;
+
+      const rawHref = a.getAttribute('href') || '';
+      const fullHref = a.href || '';
+      const text = (a.innerText || a.getAttribute('title') || a.getAttribute('aria-label') || '').trim();
+
+      if (!fullHref.startsWith('http')) continue;
+
+      // 同源检查：严禁跳转到外部社交媒体或广告
+      try {
+        const parsed = new URL(fullHref);
+        const linkHost = parsed.hostname.toLowerCase();
+        if (EXCLUDE_DOMAINS.some(ed => linkHost.includes(ed))) continue;
+        if (currentHost && rootDomain) {
+          if (!linkHost.endsWith(rootDomain) && linkHost !== currentHost) continue;
+        }
+      } catch (e) {
+        continue;
+      }
+
+      let score = 0;
+      for (const p of SUBMIT_PATTERNS) {
+        if (p.regex.test(text)) score = Math.max(score, p.score);
+      }
+      for (const up of URL_PATH_PATTERNS) {
+        if (up.regex.test(rawHref) || up.regex.test(fullHref)) score = Math.max(score, up.score);
+      }
+
+      if (score >= 6) {
+        candidates.push({
+          type: 'navigate',
+          targetUrl: fullHref,
+          text: text.slice(0, 40),
+          score,
+          el: a
+        });
+      }
+    }
+
+    // 2. 扫描可能是模态弹窗的可见 <button> 或 [role="button"]
+    const buttons = Array.from(doc.querySelectorAll('button, [role="button"], a[href="#"], a[href^="javascript"]'));
+    for (const btn of buttons) {
+      if (!this.isHumanVisible(btn, doc)) continue;
+
+      const text = (btn.innerText || btn.getAttribute('aria-label') || '').trim();
+      let score = 0;
+      for (const p of SUBMIT_PATTERNS) {
+        if (p.regex.test(text)) score = Math.max(score, p.score);
+      }
+
+      if (score >= 8) {
+        candidates.push({
+          type: 'modal',
+          targetUrl: '',
+          text: text.slice(0, 40),
+          score: score + 1, // 按钮在现代 SPA 中通常优先级更高
+          el: btn
+        });
+      }
+    }
+
+    // 按匹配质量降序排列
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates;
+  }
+
+  /**
+   * 防线 4: 强制免费层级选择与收费墙检测 (Free-Tier Enforcement & Paywall Detection)
+   * 自动勾选 Free 选项；若检测到纯收费墙 (必须绑卡付费且无免费选项)，立即熔断
+   * @returns {{ isPaywall: boolean, selectedFree: boolean, reason?: string }}
+   */
+  static enforceFreeTierAndDetectPaywall(doc = document) {
+    const bodyText = (doc.body ? doc.body.innerText : '').toLowerCase();
+
+    // 1. 尝试定位并优先勾选免费/标准层级选项 (Free / Standard / Community / $0)
+    let selectedFree = false;
+    const tierOptions = Array.from(doc.querySelectorAll('input[type="radio"], input[type="checkbox"], .pricing-card, .plan-item, label, button'));
+    
+    for (const opt of tierOptions) {
+      if (!this.isHumanVisible(opt, doc)) continue;
+      const text = (opt.innerText || opt.value || opt.closest('label')?.innerText || '').toLowerCase();
+      
+      const isFree = text.includes('free') || text.includes('standard') || text.includes('basic') || text.includes('$0') || text.includes('免费');
+      const isPaid = text.includes('$29') || text.includes('$49') || text.includes('$99') || text.includes('featured') || text.includes('sponsor');
+
+      if (isFree && !isPaid) {
+        try {
+          if (opt.click) opt.click();
+          if (opt.checked !== undefined) opt.checked = true;
+          opt.dispatchEvent(new Event('change', { bubbles: true }));
+          selectedFree = true;
+          break;
+        } catch (e) {}
+      }
+    }
+
+    // 2. 检测纯收费墙 (无免费排队，必须付费)
+    const hasStripeOrPaypal = !!doc.querySelector('iframe[src*="stripe.com"], iframe[src*="paypal.com"], .stripe-card, [id*="card-element"]');
+    const hasPaidKeywords = (bodyText.includes('$29') || bodyText.includes('$49') || bodyText.includes('$99') || bodyText.includes('credit card')) &&
+                            !bodyText.includes('free queue') && !bodyText.includes('free listing') && !bodyText.includes('free submission') && !bodyText.includes('0.00');
+
+    if (hasStripeOrPaypal || (hasPaidKeywords && !selectedFree)) {
+      return {
+        isPaywall: true,
+        selectedFree: false,
+        reason: '检测到必须付费入驻 (Stripe/PayPal 收银台)，已执行 0 付费红线熔断'
+      };
+    }
+
+    return {
+      isPaywall: false,
+      selectedFree
+    };
+  }
 }
 
 if (typeof window !== 'undefined') {

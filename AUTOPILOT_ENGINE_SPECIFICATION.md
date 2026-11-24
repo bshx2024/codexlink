@@ -171,3 +171,28 @@
 ### 9.4 探针复检池 (Probe Resilience Pool) 闭环消费机制
 * 遇到验证码超时（`captcha_protected`）、必须登录（`login_required`）、页面无表单（`no_form`）或 WAF 拦截时，引擎不再粗暴判定为整体失败，而是自动将上下文注入 `referrer_probes` 表；
 * 探针池保留了原始落地页与特征信息，既保证主循环 24 小时丝滑无人值守，又为后续换用多模态大模型攻坚或人工集中批量处理沉淀了高价值资产。
+
+---
+
+## 10. v2.6 工业级防线：提交入口深度嗅探 (Two-Hop Sniffer)、反蜜罐与收费墙熔断
+
+针对外链目标站（尤其是目录站与技术博客）首页或主落地页往往不直接裸露表单、或夹杂防爬虫陷阱与高额付费套餐的问题，引擎在 `FormDetector` 与 `AutopilotEngine` 中构建了 5 大工业级防线：
+
+### 10.1 防线 1: Two-Hop 深度探索 (Two-Hop Navigation)
+* **严控跃迁深度**：单站探索深度严格限制为 1 次（`Max-Hop = 1`），严禁递归跳转导致陷入死循环或耗尽内存；
+* **跨域安全隔离**：嗅探出的入口超链接必须通过同源检查（严格限定同二级根域名，剔除 Twitter/Discord/GitHub 等外部出站外链）。
+
+### 10.2 防线 2: 真实可见性与反蜜罐过滤 (Anti-Honeypot Visibility Check)
+* **DOM 与几何双重校检**：`isHumanVisible(el)` 综合计算 `offsetParent`、`getBoundingClientRect()` 尺寸（宽高 $\ge 4\text{px}$、坐标在有效视口内）、CSS `display` / `visibility` 与 `opacity`；
+* **蜜罐粉碎**：彻底过滤负坐标绝对定位（如 `left: -9999px`）或隐藏容器中的假输入框与假按钮，杜绝触发 Cloudflare/WAF 封禁黑名单。
+
+### 10.3 防线 3: 模态弹窗与隐藏表单唤起 (Modal Trigger Detection)
+* **语义识别**：智能匹配页面顶部或悬浮导航栏中的可见按钮（如 `Submit Tool`、`Add Product`、`List Your AI`、`Leave Reply`）；
+* **主动唤醒**：优先尝试模拟点击触发模态弹窗，等待 1.5 秒后二次复检 DOM，成功捕获现代 SPA 常见弹窗表单。
+
+### 10.4 防线 4: 强制免费层级偏置与收费墙熔断 (Free-Tier Bias & Paywall Breaker)
+* **优先免费**：`enforceFreeTierAndDetectPaywall` 自动定位并勾选包含 `Free`、`Standard`、`Basic`、`$0`、`免费` 的套餐卡片或单选框；
+* **零成本红线熔断**：若页面或跳转后检测到强制绑定信用卡或 Stripe/PayPal 收银台（如 `$29/mo`、`$49 featured`），立即终止填表并标记 `paid_redirect`，坚守 0 成本白帽外链底线。
+
+### 10.5 防线 5: 探针池候选链接沉淀 (Probe Link Archiving)
+* 若多轮探索后仍未定位到可交互表单，嗅探到的高分候选链接（如 `/pricing`、`/sponsor`、`/login`）将结构化归档至 `referrer_probes` 表的 `submit_links` 字段，为后续高级攻坚积累精准特征。

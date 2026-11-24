@@ -339,36 +339,97 @@ class AutopilotEngine {
   }
 
   /**
-   * 执行单个页面的探针、AI 评论、填表与提交倒计时
+   * 将当前 Worker Tab 导航至二级页面并等待 DOM complete
+   */
+  async navigateWorkerTab(url) {
+    if (!this.workerTabId) return;
+    return new Promise((resolve) => {
+      let resolved = false;
+      const timer = setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          chrome.tabs.onUpdated.removeListener(listener);
+          resolve();
+        }
+      }, 15000);
+
+      const listener = (tabId, changeInfo) => {
+        if (tabId === this.workerTabId && changeInfo.status === 'complete') {
+          if (!resolved) {
+            resolved = true;
+            clearTimeout(timer);
+            chrome.tabs.onUpdated.removeListener(listener);
+            resolve();
+          }
+        }
+      };
+
+      chrome.tabs.onUpdated.addListener(listener);
+      chrome.tabs.update(this.workerTabId, { url });
+    });
+  }
+
+  /**
+   * 执行单个页面的探针、AI 评论、填表与提交倒计时 (支持 5 大工业级防线与双轨自适应)
    */
   async executeItemAutomation(item) {
     if (this.state !== 'RUNNING') return;
 
     try {
-      // 1. 探针感知 DOM 状态
+      // 1. 探针感知 DOM 状态、表单类型、收费墙与提交入口候选
       const [inspectRes] = await chrome.scripting.executeScript({
         target: { tabId: this.workerTabId },
         func: () => {
+          // 严重 PHP 崩溃检测
           if (document.body && (document.body.innerText.includes('There has been a critical error') || document.body.innerText.includes('Fatal error:'))) {
             return { status: 'critical_error' };
           }
+
+          // 强制登录检测
           const bodyText = document.body ? document.body.innerText.toLowerCase() : '';
           if (bodyText.includes('must be logged in') || bodyText.includes('须登录后发表评论')) {
             const hasTextarea = Array.from(document.querySelectorAll('textarea')).some(t => t.offsetHeight > 0);
             if (!hasTextarea) return { status: 'login_required' };
           }
+
+          // 强验证码拦截检测
           const hasCaptcha = !!document.querySelector('iframe[src*="recaptcha"], iframe[src*="hcaptcha"], iframe[src*="challenges.cloudflare.com"], div.g-recaptcha, div.h-captcha');
           if (hasCaptcha) return { status: 'captcha_protected' };
 
-          const commentBox = document.querySelector('#comment, textarea[name*="comment"], textarea[name*="message"], textarea');
-          if (!commentBox || commentBox.offsetHeight === 0) return { status: 'no_form' };
+          // 检测表单类型 (优先调用 FormDetector)
+          let formType = 'none';
+          if (typeof FormDetector !== 'undefined') {
+            formType = FormDetector.detectFormType(document);
+          } else {
+            const commentBox = document.querySelector('#comment, textarea[name*="comment"], textarea[name*="message"], textarea');
+            if (commentBox && commentBox.offsetHeight > 0) formType = 'blog_comment';
+          }
 
-          return { status: 'commentable' };
+          // 防线 4: 检测并优先勾选免费层级与收费墙熔断
+          let paywallInfo = { isPaywall: false };
+          if (typeof FormDetector !== 'undefined') {
+            paywallInfo = FormDetector.enforceFreeTierAndDetectPaywall(document);
+          }
+
+          // 防线 2 & 3: 若当前页无表单，进行真实可见入口与弹窗嗅探
+          let candidates = [];
+          if (formType === 'none' && typeof FormDetector !== 'undefined') {
+            candidates = FormDetector.sniffSubmissionEntry(document, window.location.href);
+          }
+
+          return {
+            status: formType !== 'none' ? 'form_found' : 'no_form',
+            formType,
+            paywallInfo,
+            candidates: candidates.map(c => ({ type: c.type, targetUrl: c.targetUrl, text: c.text, score: c.score }))
+          };
         }
       });
 
-      const status = inspectRes?.result?.status || 'no_form';
+      const res = inspectRes?.result || { status: 'no_form', formType: 'none', candidates: [] };
+      const status = res.status;
 
+      // 异常拦截：严重崩溃或需登录
       if (status === 'critical_error' || status === 'login_required') {
         this.stats.failedCount++;
         const reason = status === 'login_required' ? '须登录' : 'PHP崩溃';
@@ -385,22 +446,95 @@ class AutopilotEngine {
         return;
       }
 
+      // 验证码保护挂起
       if (status === 'captcha_protected') {
         this.startCaptchaTimeout(item);
         return;
       }
 
-      if (status === 'no_form') {
-        this.stats.failedCount++;
-        this.recordProbe(item, { reason: '未找到评论输入框', mode: 'none', hasForm: false });
-        if (window.publishLogger) {
-          window.publishLogger.logAction({ url: item.url, domain: item.domain, title: item.title, status: 'failed', reason: '无评论表单' });
-        }
-        this.notifyStateChange(`⚠️ [${item.domain}] 未找到有效评论表单，已存入探针池并跳过...`);
+      // 防线 4: 支付网关/收费墙极速熔断
+      if (res.paywallInfo && res.paywallInfo.isPaywall) {
+        this.notifyStateChange(`⚠️ [${item.domain}] 发现纯收费墙 (无免费提交选项)，遵守 0 成本红线自动熔断！`);
+        this.recordProbe(item, { reason: res.paywallInfo.reason || '纯收费入驻墙', mode: 'paid' });
         this.advanceToNextItem();
         return;
       }
 
+      // =========================================================================
+      // 防线 1 & 3: 二级跳转深度嗅探 (Two-Hop Deep Navigation & Modal Click)
+      // =========================================================================
+      if (status === 'no_form') {
+        if (!item._hasHopped && res.candidates && res.candidates.length > 0) {
+          const topCandidate = res.candidates[0];
+
+          if (topCandidate.type === 'navigate' && topCandidate.targetUrl) {
+            item._hasHopped = true;
+            this.notifyStateChange(`🔎 [${item.domain}] 首页未直接展示表单，嗅探到提交入口: ${topCandidate.text || topCandidate.targetUrl}，正在自动跳转深入...`);
+            await this.navigateWorkerTab(topCandidate.targetUrl);
+            setTimeout(() => this.executeItemAutomation(item), 1500);
+            return;
+          } else if (topCandidate.type === 'modal') {
+            item._hasHopped = true;
+            this.notifyStateChange(`🔎 [${item.domain}] 探测到提交弹窗按钮: [${topCandidate.text}]，正在模拟点击呼出表单...`);
+            await chrome.scripting.executeScript({
+              target: { tabId: this.workerTabId },
+              func: (btnText) => {
+                const btns = Array.from(document.querySelectorAll('button, [role="button"], a'));
+                const targetBtn = btns.find(b => (b.innerText || '').trim().includes(btnText));
+                if (targetBtn) targetBtn.click();
+              },
+              args: [topCandidate.text]
+            });
+            await new Promise(r => setTimeout(r, 1200));
+            this.executeItemAutomation(item);
+            return;
+          }
+        }
+
+        // 防线 5: 若已单步跳转过仍未找到表单，将候选链接资产化存入探针池
+        this.stats.failedCount++;
+        const candidateLinks = (res.candidates || []).map(c => c.targetUrl).filter(Boolean);
+        this.recordProbe(item, {
+          reason: item._hasHopped ? '二级跳转后仍未找到表单' : '未找到有效提交表单或入口',
+          mode: 'none',
+          hasForm: false,
+          submit_links: candidateLinks
+        });
+        if (window.publishLogger) {
+          window.publishLogger.logAction({ url: item.url, domain: item.domain, title: item.title, status: 'failed', reason: '无评论/提交表单' });
+        }
+        this.notifyStateChange(`⚠️ [${item.domain}] 探索完毕未找到有效表单，已沉淀至探针池并跳过...`);
+        this.advanceToNextItem();
+        return;
+      }
+
+      // =========================================================================
+      // 双轨表单自适应填充 (Dual-Track Form Adapter)
+      // =========================================================================
+      const profile = (window.projectManager ? window.projectManager.getActiveProject() : {}) || {};
+
+      if (res.formType === 'directory') {
+        // 轨道 A: 目录站结构化表单自动填充 (Title/Slogan/RichText/Logo/Screenshot)
+        this.notifyStateChange(`📋 [${item.domain}] 识别为目录站结构化表单，正在全自动灌入产品资料与截图...`);
+        
+        const [fillRes] = await chrome.scripting.executeScript({
+          target: { tabId: this.workerTabId },
+          func: async (p) => {
+            if (typeof FormDetector !== 'undefined') {
+              return await FormDetector.detectAndFillDirectoryForm(p, document);
+            }
+            return { filledCount: 0 };
+          },
+          args: [profile]
+        });
+
+        const filledCount = fillRes?.result?.filledCount || 0;
+        this.notifyStateChange(`✨ [${item.domain}] 目录表单成功预填 ${filledCount} 个字段，准备进入提交倒计时...`);
+        this.startSubmitCountdown(item, 'Directory Submission', 95);
+        return;
+      }
+
+      // 轨道 B: 技术博客评论表单填充
       // 2. 自动滚动至评论区
       await chrome.scripting.executeScript({
         target: { tabId: this.workerTabId },
@@ -420,9 +554,6 @@ class AutopilotEngine {
       await new Promise(resolve => setTimeout(resolve, 1500));
 
       // 3. AI 生成正文建设性评论与自动高亮填表
-      const profile = (window.projectManager ? window.projectManager.getActiveProject() : {}) || {};
-
-      // 提取正文摘要
       const [docRes] = await chrome.scripting.executeScript({
         target: { tabId: this.workerTabId },
         func: () => {
@@ -543,18 +674,29 @@ class AutopilotEngine {
             func: () => {
               const url = window.location.href;
               const text = document.body ? document.body.innerText.toLowerCase() : '';
+              if (url.includes('checkout.stripe.com') || url.includes('paypal.com') || url.includes('buy.stripe.com')) return { status: 'paid_redirect' };
               if (url.includes('wp-comments-post.php') && text.includes('duplicate comment')) return { status: 'duplicate_comment' };
               if (text.includes('critical error') || text.includes('fatal error')) return { status: 'php_critical_error' };
               if (text.includes('access denied') || text.includes('cloudflare ray id') || text.includes('wordfence')) return { status: 'waf_blocked' };
               if (url.includes('#comment') || text.includes('awaiting moderation') || text.includes('评论正等待审核')) return { status: 'live_pending' };
+              if (text.includes('thank you') || text.includes('submitted') || text.includes('received') || text.includes('under review') || text.includes('提交成功') || text.includes('审核中')) return { status: 'directory_submitted' };
               return { status: 'published' };
             }
           });
 
           const postStatus = postRes?.result?.status || 'published';
+          if (postStatus === 'paid_redirect') {
+            this.stats.failedCount++;
+            this.notifyStateChange(`⚠️ [${item.domain}] 提交后触发支付网关跳转，触发 0 成本支付熔断！`);
+            this.recordProbe(item, { reason: '提交触发Stripe/PayPal支付网关跳转', mode: 'paid' });
+            this.advanceToNextItem();
+            return;
+          }
+
           if (postStatus === 'duplicate_comment') verifyStatus = 'duplicate';
           else if (postStatus === 'waf_blocked') verifyStatus = 'removed';
           else if (postStatus === 'php_critical_error') verifyStatus = 'http_error';
+          else if (postStatus === 'directory_submitted') verifyStatus = 'pending';
           else verifyStatus = 'pending';
         } catch (e) {}
 
@@ -573,7 +715,7 @@ class AutopilotEngine {
           });
         }
 
-        this.notifyStateChange(`🟢 [${item.domain}] 评论成功提交并完成日志记库！`);
+        this.notifyStateChange(`🟢 [${item.domain}] 外链成功提交并完成成果记库！`);
         this.advanceToNextItem();
       }, 3000);
     } catch (e) {

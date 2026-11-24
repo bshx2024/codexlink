@@ -1,6 +1,6 @@
 {
   "version": "2.0.0",
-  "updated_at": "2026-11-24T00:32:03.465Z",
+  "updated_at": "2026-11-24T00:44:56.739Z",
   "autoIncs": {
     "devto_outbound_links": 147,
     "ai_tool_sites": 22,
@@ -2464,13 +2464,13 @@
         "link_page_url": "https://www.codenewbie.org/podcast",
         "anchor_text": "",
         "link_type": "dofollow",
-        "status": "pending",
-        "claimed_by": null,
-        "attempts": 1,
+        "status": "sending",
+        "claimed_by": "sidepanel-ui",
+        "attempts": 2,
         "last_error": null,
         "notes": "被 dev.to 社区共同引用频次: 4 次",
         "created_at": "2026-11-23T14:27:24.501Z",
-        "updated_at": "2026-11-24T00:32:03.465Z"
+        "updated_at": "2026-11-24T00:44:56.739Z"
       },
       {
         "id": 2,
@@ -2479,13 +2479,13 @@
         "link_page_url": "https://dev-to-uploads.s3.us-east-2.amazonaws.com/uploads/articles/0o48b178z5b6hn18xop3.gif",
         "anchor_text": "",
         "link_type": "dofollow",
-        "status": "pending",
-        "claimed_by": null,
-        "attempts": 1,
+        "status": "sending",
+        "claimed_by": "sidepanel-ui",
+        "attempts": 2,
         "last_error": null,
         "notes": "被 dev.to 社区共同引用频次: 11 次",
         "created_at": "2026-11-23T14:27:24.501Z",
-        "updated_at": "2026-11-24T00:32:03.465Z"
+        "updated_at": "2026-11-24T00:44:56.739Z"
       },
       {
         "id": 3,
@@ -2494,13 +2494,13 @@
         "link_page_url": "https://mlh.link/spacexsi-landing",
         "anchor_text": "",
         "link_type": "dofollow",
-        "status": "pending",
-        "claimed_by": null,
-        "attempts": 0,
+        "status": "sending",
+        "claimed_by": "sidepanel-ui",
+        "attempts": 1,
         "last_error": null,
         "notes": "被 dev.to 社区共同引用频次: 3 次",
         "created_at": "2026-11-23T14:27:24.501Z",
-        "updated_at": "2026-11-23T14:27:24.501Z"
+        "updated_at": "2026-11-24T00:44:56.739Z"
       },
       {
         "id": 4,
@@ -2509,13 +2509,13 @@
         "link_page_url": "https://adadevelopersacademy.org/",
         "anchor_text": "",
         "link_type": "dofollow",
-        "status": "pending",
-        "claimed_by": null,
-        "attempts": 0,
+        "status": "sending",
+        "claimed_by": "sidepanel-ui",
+        "attempts": 1,
         "last_error": null,
         "notes": "被 dev.to 社区共同引用频次: 2 次",
         "created_at": "2026-11-23T14:27:24.501Z",
-        "updated_at": "2026-11-23T14:27:24.501Z"
+        "updated_at": "2026-11-24T00:44:56.739Z"
       },
       {
         "id": 5,
@@ -2524,13 +2524,13 @@
         "link_page_url": "https://g.dev/cloud/gemini-4-hydrogen",
         "anchor_text": "",
         "link_type": "dofollow",
-        "status": "pending",
-        "claimed_by": null,
-        "attempts": 0,
+        "status": "sending",
+        "claimed_by": "sidepanel-ui",
+        "attempts": 1,
         "last_error": null,
         "notes": "被 dev.to 社区共同引用频次: 6 次",
         "created_at": "2026-11-23T14:27:24.501Z",
-        "updated_at": "2026-11-23T14:27:24.501Z"
+        "updated_at": "2026-11-24T00:44:56.739Z"
       },
       {
         "id": 6,
@@ -2539,13 +2539,13 @@
         "link_page_url": "https://www.linkedin.com/in/remigiusz-samborski/",
         "anchor_text": "",
         "link_type": "dofollow",
-        "status": "pending",
-        "claimed_by": null,
-        "attempts": 0,
+        "status": "sending",
+        "claimed_by": "sidepanel-ui",
+        "attempts": 1,
         "last_error": null,
         "notes": "被 dev.to 社区共同引用频次: 4 次",
         "created_at": "2026-11-23T14:27:24.501Z",
-        "updated_at": "2026-11-23T14:27:24.501Z"
+        "updated_at": "2026-11-24T00:44:56.739Z"
       },
       {
         "id": 7,
@@ -2554,13 +2554,13 @@
         "link_page_url": "https://docs.cloud.google.com/sdk/gcloud/reference/service-extensions/wasm-plugin-versions/create",
         "anchor_text": "",
         "link_type": "dofollow",
-        "status": "pending",
-        "claimed_by": null,
-        "attempts": 0,
+        "status": "sending",
+        "claimed_by": "sidepanel-ui",
+        "attempts": 1,
         "last_error": null,
         "notes": "被 dev.to 社区共同引用频次: 18 次",
         "created_at": "2026-11-23T14:27:24.501Z",
-        "updated_at": "2026-11-23T14:27:24.501Z"
+        "updated_at": "2026-11-24T00:44:56.739Z"
       },
       {
         "id": 8,
@@ -2569,13 +2569,13 @@
         "link_page_url": "https://aiwerewolf.net",
         "anchor_text": "",
         "link_type": "dofollow",
-        "status": "pending",
-        "claimed_by": null,
-        "attempts": 0,
+        "status": "sending",
+        "claimed_by": "sidepanel-ui",
+        "attempts": 1,
         "last_error": null,
         "notes": "被 dev.to 社区共同引用频次: 2 次",
         "created_at": "2026-11-23T14:27:24.501Z",
-        "updated_at": "2026-11-23T14:27:24.501Z"
+        "updated_at": "2026-11-24T00:44:56.739Z"
       },
       {
         "id": 9,
@@ -2584,13 +2584,13 @@
         "link_page_url": "https://azelianouski.dev/images/werewolf-costs-villager.jpg",
         "anchor_text": "",
         "link_type": "dofollow",
-        "status": "pending",
-        "claimed_by": null,
-        "attempts": 0,
+        "status": "sending",
+        "claimed_by": "sidepanel-ui",
+        "attempts": 1,
         "last_error": null,
         "notes": "被 dev.to 社区共同引用频次: 8 次",
         "created_at": "2026-11-23T14:27:24.501Z",
-        "updated_at": "2026-11-23T14:27:24.501Z"
+        "updated_at": "2026-11-24T00:44:56.739Z"
       },
       {
         "id": 10,
@@ -2599,13 +2599,13 @@
         "link_page_url": "https://www.youtube.com/@MajorLeagueHacking?sub_confirmation=1",
         "anchor_text": "",
         "link_type": "dofollow",
-        "status": "pending",
-        "claimed_by": null,
-        "attempts": 0,
+        "status": "sending",
+        "claimed_by": "sidepanel-ui",
+        "attempts": 1,
         "last_error": null,
         "notes": "被 dev.to 社区共同引用频次: 3 次",
         "created_at": "2026-11-23T14:27:24.501Z",
-        "updated_at": "2026-11-23T14:27:24.501Z"
+        "updated_at": "2026-11-24T00:44:56.739Z"
       },
       {
         "id": 11,
