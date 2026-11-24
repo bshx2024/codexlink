@@ -1,6 +1,6 @@
 {
   "version": "2.0.0",
-  "updated_at": "2026-11-23T14:27:24.501Z",
+  "updated_at": "2026-11-24T00:32:03.465Z",
   "autoIncs": {
     "devto_outbound_links": 147,
     "ai_tool_sites": 22,
@@ -2466,11 +2466,11 @@
         "link_type": "dofollow",
         "status": "pending",
         "claimed_by": null,
-        "attempts": 0,
+        "attempts": 1,
         "last_error": null,
         "notes": "被 dev.to 社区共同引用频次: 4 次",
         "created_at": "2026-11-23T14:27:24.501Z",
-        "updated_at": "2026-11-23T14:27:24.501Z"
+        "updated_at": "2026-11-24T00:32:03.465Z"
       },
       {
         "id": 2,
@@ -2481,11 +2481,11 @@
         "link_type": "dofollow",
         "status": "pending",
         "claimed_by": null,
-        "attempts": 0,
+        "attempts": 1,
         "last_error": null,
         "notes": "被 dev.to 社区共同引用频次: 11 次",
         "created_at": "2026-11-23T14:27:24.501Z",
-        "updated_at": "2026-11-23T14:27:24.501Z"
+        "updated_at": "2026-11-24T00:32:03.465Z"
       },
       {
         "id": 3,
