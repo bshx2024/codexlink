@@ -1,0 +1,64 @@
+{
+  "brand": {
+    "name": "APIVALE",
+    "website": "https://apivale.com",
+    "logoUrl": "https://apivale.com/logo.svg",
+    "tagline": "Chinese AI API gateway for DeepSeek, Qwen, Kimi & GLM",
+    "description": "Access DeepSeek, Qwen, Kimi & GLM via APIVALE — the premier Chinese AI API Gateway. APIVALE provides global developers and autonomous AI agents with a high-availability, unified OpenAI-compatible endpoint. High performance, PayPal accepted, and zero-friction instant access. Start free.",
+    "complianceBannedTerms": [
+      "Zero-KYC",
+      "No-KYC",
+      "Anonymous",
+      "No ID required"
+    ]
+  },
+  "liveModels": [
+    {
+      "provider": "DeepSeek",
+      "models": ["deepseek-v4.1-flash", "deepseek-v4-pro", "deepseek-v4-flash", "deepseek-reasoner", "deepseek-chat"]
+    },
+    {
+      "provider": "Alibaba Qwen",
+      "models": ["qwen3.8-max", "qwen3.8-flash", "qwen3.8-omni-flash"]
+    },
+    {
+      "provider": "Zhipu GLM",
+      "models": ["glm-5.3-flash", "glm-5.3", "glm-5.3-flashx"]
+    },
+    {
+      "provider": "Moonshot Kimi",
+      "models": ["kimi-k3", "kimi-k3.1-pro", "kimi-k3.1-pro-highspeed"]
+    }
+  ],
+  "productHunt": {
+    "tags": ["Developer Tools", "Artificial Intelligence", "API"],
+    "role": "maker",
+    "pricingMode": "free_options",
+    "promoCode": {
+      "offerMaxChars": 25,
+      "offer": "$0.50 Extra API Credits",
+      "code": "PRODUCTHUNT",
+      "note": "Unlocks ~750,000+ Tokens for DeepSeek & GLM on top of $0.20 signup trial"
+    },
+    "additionalLinks": [
+      "https://github.com/bshx2024/cursor-deepseek-template",
+      "https://github.com/bshx2024/docker-compose-deepseek-gateway",
+      "https://github.com/bshx2024/esp32-deepseek-client"
+    ],
+    "companyInfo": {
+      "isOpenSource": false,
+      "funding": "Bootstrapped",
+      "teamSize": "1-10",
+      "crunchbaseUrl": ""
+    },
+    "mediaSpec": {
+      "logoDimensions": "512x512",
+      "galleryDimensions": "1270x760",
+      "recommendedSlides": [
+        "Hero section (English dark/clean overview)",
+        "10s Quickstart (Change 1 Line base_url diff + multi-SDK tabs)",
+        "High-Throughput Flash Trio pricing & model matrix"
+      ]
+    }
+  }
+}
